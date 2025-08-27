@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""
+🧬 IGVer Agent - Main Launcher
+Smart launcher that detects the best interface to use
+"""
+
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+def check_package(package):
+    """Check if a Python package is installed"""
+    try:
+        __import__(package)
+        return True
+    except ImportError:
+        return False
+
+def print_banner():
+    """Print welcome banner"""
+    print("""
+    ╔══════════════════════════════════════════════════════╗
+    ║                                                      ║
+    ║        🧬 IGVer Genomic AI Agent 🧬                 ║
+    ║                                                      ║
+    ║     Automated IGV visualization with AI analysis    ║
+    ║                                                      ║
+    ╚══════════════════════════════════════════════════════╝
+    """)
+
+def main():
+    """Main launcher"""
+    print_banner()
+    
+    # Check available interfaces
+    has_rich = check_package('rich')
+    has_flask = check_package('flask')
+    
+    # Command line arguments
+    if len(sys.argv) > 1:
+        if '--web' in sys.argv:
+            if has_flask:
+                print("🌐 Starting web interface...")
+                subprocess.run([sys.executable, 'web_interface.py'])
+            else:
+                print("❌ Flask not installed. Install with: pip install flask flask-cors")
+                sys.exit(1)
+        elif '--cli' in sys.argv:
+            subprocess.run([sys.executable, 'igver_agent_cli.py'] + sys.argv[2:])
+        elif '--help' in sys.argv or '-h' in sys.argv:
+            print("""
+Usage: igver_agent [OPTIONS]
+
+Options:
+  --web         Start web interface (requires Flask)
+  --cli         Start command-line interface
+  --help        Show this help message
+  
+Interactive Mode (default):
+  Run without arguments to choose interface interactively
+  
+CLI Mode Examples:
+  igver_agent --cli --interactive
+  igver_agent --cli -b sample.bam -r "chr1:1000-2000"
+  igver_agent --cli --help
+
+Web Mode:
+  igver_agent --web
+  Then open http://localhost:5000 in your browser
+            """)
+        else:
+            # Pass through to CLI
+            subprocess.run([sys.executable, 'igver_agent_cli.py'] + sys.argv[1:])
+        return
+    
+    # Interactive mode - let user choose
+    print("Choose your interface:\n")
+    
+    interfaces = []
+    
+    if has_flask:
+        interfaces.append(("Web Interface (Recommended for beginners)", "--web"))
+        print(f"  1. 🌐 Web Interface (Recommended for beginners)")
+    
+    if has_rich:
+        interfaces.append(("Rich CLI (Best terminal experience)", "--cli --interactive"))
+        print(f"  {len(interfaces)}. 💻 Rich CLI (Best terminal experience)")
+    else:
+        interfaces.append(("Standard CLI", "--cli --interactive"))
+        print(f"  {len(interfaces)}. 💻 Standard CLI")
+    
+    interfaces.append(("Quick Analysis (Command line)", "--cli"))
+    print(f"  {len(interfaces)}. ⚡ Quick Analysis (Command line)")
+    
+    interfaces.append(("Exit", None))
+    print(f"  {len(interfaces)}. ❌ Exit")
+    
+    # Get user choice
+    while True:
+        try:
+            choice = input("\nEnter your choice (1-{}): ".format(len(interfaces)))
+            choice_idx = int(choice) - 1
+            
+            if 0 <= choice_idx < len(interfaces):
+                name, args = interfaces[choice_idx]
+                
+                if args is None:
+                    print("Goodbye! 👋")
+                    sys.exit(0)
+                elif args == "--web":
+                    print("\n🌐 Starting web interface...")
+                    print("The browser will open automatically.")
+                    print("Press Ctrl+C to stop the server.\n")
+                    subprocess.run([sys.executable, 'web_interface.py'])
+                elif args == "--cli":
+                    print("\n⚡ Quick Analysis Mode")
+                    print("Run 'igver_agent --cli --help' for usage\n")
+                    subprocess.run([sys.executable, 'igver_agent_cli.py', '--help'])
+                else:
+                    subprocess.run([sys.executable, 'igver_agent_cli.py'] + args.split()[1:])
+                break
+            else:
+                print("Invalid choice. Please try again.")
+        except (ValueError, KeyboardInterrupt):
+            print("\nGoodbye! 👋")
+            sys.exit(0)
+
+if __name__ == "__main__":
+    # Change to agent directory
+    agent_dir = Path(__file__).parent
+    os.chdir(agent_dir)
+    
+    # Check if in virtual environment
+    if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        print("⚠️  Warning: Not running in virtual environment")
+        print("   Recommended: source venv/bin/activate\n")
+    
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user. Goodbye! 👋")
+        sys.exit(0)

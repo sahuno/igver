@@ -28,14 +28,15 @@ python setup.py sdist bdist_wheel
 # Basic usage
 igver -i input.bam -r "chr1:1000-2000" -o output_dir
 
-# Multiple BAM files and regions
+# Multiple BAM files and regions (space-separated, NOT comma-separated)
 igver -i sample1.bam sample2.bam -r regions.txt -o screenshots/
+# Note: BAM files must be space-separated. Comma-separated paths will be treated as a single filename
 
 # Using a text file with list of tracks (one per line)
 igver -i tracks.txt -r regions.txt -o screenshots/
 
 # With custom genome and container
-igver -i input.bam -r "chr1:1000-2000" -g hg38 -sif /path/to/igver.sif
+igver -i input.bam -r "chr1:1000-2000" -g hg38 --singularity-image /path/to/igver.sif
 ```
 
 #### Input File Format (.txt)
@@ -61,14 +62,19 @@ import igver
 
 # Generate screenshots
 figures = igver.load_screenshots(
-    bam_paths=['sample1.bam', 'sample2.bam'],
+    paths=['sample1.bam', 'sample2.bam'],
     regions=['chr1:1000-2000', 'chr2:3000-4000'],
-    outdir='screenshots/',
+    output_dir='screenshots/',
     genome='hg19'
 )
 
 # Create batch script only
-igver.create_batch_script(bam_paths, regions, genome, outdir)
+batch_file, png_paths = igver.create_batch_script(
+    paths=['sample1.bam', 'sample2.bam'],
+    regions=['chr1:1000-2000', 'chr2:3000-4000'],
+    output_dir='screenshots/',
+    genome='hg19'
+)
 ```
 
 ## Architecture
@@ -85,7 +91,6 @@ igver.create_batch_script(bam_paths, regions, genome, outdir)
 - `load_screenshots()`: Main API entry point
 - `create_batch_script()`: Generates IGV batch files
 - `run_igv()`: Executes IGV via Singularity
-- `load_image()`: Loads generated screenshots
 
 **igver/cli.py**
 - Command-line interface using argparse
@@ -131,7 +136,11 @@ Run tests with: `pytest test/test_cli.py`
 
 1. **Singularity Dependency**: The tool requires Singularity to be installed and accessible in PATH
 2. **Display Handling**: Uses xvfb for headless operation - no X display required
-3. **Output Naming**: Screenshots are named as `{bam_basename}_{region}.png`
+3. **Output Naming**: Screenshots are named as:
+   - Without tags: `{region_formatted}.png` (e.g., `chr1-1000-2000.png`)
+   - With tags: `{region_formatted}.{tag}.png` (e.g., `chr1-1000-2000.test.png`)
+   - Region formatting: colons become hyphens (`:` → `-`)
+   - Note: When multiple BAMs are loaded together, they appear in the same screenshot
 4. **Genome Aliases**: Automatically maps genome aliases (e.g., GRCh38 → hg38)
 5. **IGV Preferences**: Customizes IGV display settings for genomics visualization
 
