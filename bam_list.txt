@@ -1,6 +1,0 @@
-# List of BAM files for testing
-test/test_tumor.bam
-test/test_normal.bam
-
-# Additional comment - these are test files
-# Empty lines and comments are ignored
