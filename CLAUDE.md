@@ -150,6 +150,43 @@ See `TASK_LIST.md` for the comprehensive development roadmap including:
 - Phase 1: Standalone software optimization (IGV 2.19.5 update, BED file support)
 - Phase 2: AI agent development (natural language interface, automated workflows)
 
+## Lessons Learned & Common Pitfalls
+
+### Chromosome Naming Mismatch (chr prefix)
+- **Problem**: BED files from tools like L1EM often use non-prefixed chromosome names (`1`, `10`) while BAMs aligned to Broad's `Homo_sapiens_assembly38.fasta` (GRCh38) use `chr1`, `chr10`. IGV's `hg38` genome also expects `chr` prefix.
+- **Solution**: Preprocess BED files to add `chr` prefix before passing to igver:
+  ```bash
+  awk 'BEGIN{OFS="\t"} { if ($1 !~ /^chr/) $1 = "chr" $1; print }' input.bed > input_chrPrefix.bed
+  ```
+- **Tip**: Always check BAM header (`samtools view -H`) and BED file chromosome names match before running igver.
+
+### DNA Methylation Visualization (ONT data)
+- **Problem**: Default igver screenshots don't show base modification colors from ONT BAMs (5mCG/5hmCG from dorado basecalling).
+- **Solution**: Use `--igv-config` with a preferences file containing:
+  ```
+  colorBy BASE_MODIFICATION
+  ```
+  This injects the IGV batch command before each snapshot via the `additional_pref` mechanism in `create_batch_script()`.
+- **Colors**: Red = methylated CpG, Blue = unmethylated CpG. Intensity reflects modification probability (ML tag).
+- **Requires**: BAM must contain MM/ML tags (produced by dorado, guppy, or similar basecallers).
+
+### Running Inside Singularity
+- When calling igver via `singularity exec ... igver`, always pass `--no-singularity` to avoid nested containerization.
+- Bind-mount all directories containing BAMs, BED files, output dirs, and the igv-config file:
+  ```bash
+  singularity exec --bind /data1/collab001,/data1/greenbab docker://sahuno/igver:latest igver ... --no-singularity
+  ```
+
+### Large Region Sets (>1000 regions)
+- IGV batch scripts with many regions (e.g., 1483 L1 elements) can take a long time. Consider running via SLURM or in a `screen`/`tmux` session.
+- The retry mechanism (up to 2 iterations) helps with occasional IGV failures on large batches.
+
+### ssh Not Available in All Environments
+- `git pull` via SSH may fail on compute nodes where `ssh` binary is not in PATH. Use HTTPS URLs as a workaround:
+  ```bash
+  git pull https://github.com/sahuno/igver.git main
+  ```
+
 ## Future Agent Development Notes
 
 For creating an agent to streamline genomics analysis:

@@ -165,6 +165,7 @@ def main():
             "igv_dir": args.igv_dir,
             "dpi": args.dpi,
             "remove_png": False,  # don't remove output images
+            "load_figures": False,  # CLI only needs files on disk, skip matplotlib to save memory
             "debug": args.debug,
             "output_format": args.format,
             "use_singularity": not args.no_singularity,

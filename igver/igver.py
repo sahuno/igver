@@ -89,12 +89,13 @@ def _convert_svg_to_pdf(svg_paths, remove_svg, dpi, debug):
     return pdf_paths
 
 
-def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="/opt/IGV_2.19.5", 
+def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="/opt/IGV_2.19.5",
                      overwrite=True, remove_png=True, dpi=300,
                      singularity_image='docker://sahuno/igver:latest', singularity_args='-B /home',
-                     debug=False, output_format='png', use_singularity=None, **kwargs):
+                     debug=False, output_format='png', use_singularity=None,
+                     load_figures=True, **kwargs):
     """
-    Generates IGV screenshots and loads them into a Matplotlib figure.
+    Generates IGV screenshots and optionally loads them into Matplotlib figures.
 
     Parameters:
         paths (list of str): Paths to input files (BAM, BEDPE, VCF, bigWig, etc).
@@ -109,10 +110,13 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
         singularity_args (str, optional): singularity arguments string (default: "-B /home").
         debug (bool, optional): Whether to show logs for debugging (default: False).
         output_format (str, optional): Output image format - 'png', 'svg', or 'pdf' (default: 'png').
+        load_figures (bool, optional): Whether to load screenshots into Matplotlib figures (default: True).
+            Set to False when only file output is needed (e.g. CLI usage) to avoid memory overhead.
         **kwargs (optional): *kwargs* such as tag, max_panel_height, overlap_display, igv_config for create_batch_script
 
     Returns:
-        list of matplotlib.figure.Figure: list of figures containing the IGV screenshots.
+        list: If load_figures=True, returns matplotlib.figure.Figure objects.
+              If load_figures=False, returns file paths to the generated screenshots.
     """
     from .igver import create_batch_script, run_igv  # Import helper functions
 
@@ -147,7 +151,11 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
         raise RuntimeError("[ERROR] No screenshots generated.")
 
     # Handle different output formats
-    if output_format == 'pdf':
+    if not load_figures:
+        # Skip loading into matplotlib — just return file paths.
+        # This avoids creating unclosed figures that leak memory (important for large region sets).
+        return output_paths
+    elif output_format == 'pdf':
         # For PDF, we need to convert from SVG
         figures = _convert_svg_to_pdf(output_paths, remove_png, dpi, debug)
     elif output_format == 'svg':
