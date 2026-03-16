@@ -302,24 +302,34 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
         tag (str, optional): Tag to suffix the PNG file name (default: None).
         max_panel_height (int, optional): Maximum panel height for IGV (default: 200).
         overlap_display (str, optional): Display mode for overlapping reads ('expand', 'collapse', 'squish', default: 'squish').
-        igv_config (str, optional): Path to additional IGV preferences file (default: None).
+        igv_config (str, optional): Path to file containing IGV batch commands to inject before
+            each snapshot (default: None). Must use IGV batch command syntax (e.g. 'colorBy BASE_MODIFICATION'),
+            not KEY=VALUE properties format.
 
     Returns:
         str: The path to the generated IGV batch script.
     """
     assert overlap_display in ['expand', 'collapse', 'squish'], f"Invalid overlap_display: {overlap_display}"
-    
+
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
     # Generate a unique batch file name
     batch_filename = os.path.join(output_dir, f'{uuid.uuid4()}.batch')
-    
-    # Read additional IGV preferences if provided
+
+    # Read additional IGV batch commands if provided
     additional_pref = ""
     if igv_config and os.path.exists(igv_config):
         with open(igv_config, 'r') as f:
             additional_pref = f.read().strip()
+        # Warn if any lines look like KEY=VALUE properties format (silently ignored by IGV batch interpreter)
+        for line in additional_pref.splitlines():
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line and not line.startswith('preference'):
+                print(f"[WARNING] igv-config line looks like properties format: '{line}'")
+                print(f"  IGV batch scripts do not support KEY=VALUE syntax. Use batch command syntax instead:")
+                print(f"  e.g. 'preference {line.replace('=', ' ')}' or 'colorBy BASE_MODIFICATION'")
+                break  # Warn once, not per line
 
     # Create batch file content
     batch_content = [

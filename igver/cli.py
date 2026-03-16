@@ -54,7 +54,7 @@ def parse_args():
     )
     parser.add_argument(
         "-c", "--igv-config",
-        help="Path to additional IGV preferences file (optional)."
+        help="Path to file containing IGV batch commands to inject before each snapshot (e.g. 'colorBy BASE_MODIFICATION'). Note: use batch command syntax, not KEY=VALUE properties format."
     )
     parser.add_argument(
         "--singularity-image", 
