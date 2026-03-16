@@ -280,9 +280,9 @@ igver \
 
 ## Advanced Usage
 
-### DNA Methylation Visualization (ONT)
+### DNA Methylation Visualization (ONT/PacBio)
 
-Oxford Nanopore (ONT) BAM files from dorado/guppy contain base modification tags (MM/ML) for 5mCG and 5hmCG. IGV can color reads by these modifications.
+BAM and CRAM files from ONT (dorado/guppy) or PacBio contain base modification tags (MM/ML) for 5mCG, 5hmCG, 6mA, etc. IGV can color reads by these modifications when configured correctly.
 
 **Step 1**: Create an IGV config file for methylation:
 ```bash
@@ -291,13 +291,16 @@ echo "colorBy BASE_MODIFICATION" > methylation_prefs.txt
 
 **Step 2**: Run igver with the config:
 ```bash
+# Avoid stale bind variables that can cause mount failures
+unset SINGULARITY_BIND APPTAINER_BIND 2>/dev/null || true
+
 singularity exec \
   -B /data1 \
   docker://sahuno/igver:latest \
   igver \
     -i sample_modBaseCalls_dedup_sorted.bam \
     -r regions.bed \
-    -o ./methylation_screenshots \
+    -o ./IGV_hg38_methylation \
     -g hg38 \
     --dpi 600 \
     -d expand \
@@ -306,12 +309,28 @@ singularity exec \
     -c methylation_prefs.txt
 ```
 
+**CRAM files** work identically to BAM — just pass the reference FASTA via `--genome`:
+```bash
+igver -i sample.cram -r regions.bed --genome /path/to/reference.fna -c methylation_prefs.txt ...
+```
+
 **Color interpretation**:
 - **Red** = methylated CpG (5mC)
 - **Blue** = unmethylated CpG
 - Color intensity reflects the modification probability (from the ML tag)
 
-**Requirements**: The BAM must contain `MM` and `ML` tags produced by a methylation-aware basecaller (dorado, guppy, etc.).
+**Requirements**: The input BAM/CRAM must contain `MM` and `ML` tags produced by a methylation-aware basecaller (dorado, guppy, etc.).
+
+**Valid `colorBy` values for base modifications**:
+
+| Value | Effect |
+|-------|--------|
+| `BASE_MODIFICATION` | Color by all base modifications (5mC, 6mA, etc.) |
+| `BASE_MODIFICATION_2COLOR` | Two-color mode (red = methylated, blue = unmethylated) |
+
+> **Warning**: `colorBy BASE_MODIFICATION_5MC` is **not valid** and will be silently ignored by IGV. Use `BASE_MODIFICATION` instead. The `_5MC` suffix only works with the `preference` command: `preference SAM.COLOR_BY BASE_MODIFICATION_5MC`.
+
+**Quick diagnostic**: Methylation-colored screenshots are roughly **2x the file size** of gray (uncolored) screenshots at the same locus (~80KB vs ~35KB at 600 DPI). This is a fast way to verify coloring worked without opening every image.
 
 ### Working with Haplotagged Reads
 ```bash

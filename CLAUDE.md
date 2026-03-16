@@ -161,14 +161,20 @@ See `TASK_LIST.md` for the comprehensive development roadmap including:
 - **Tip**: Always check BAM header (`samtools view -H`) and BED file chromosome names match before running igver.
 
 ### DNA Methylation Visualization (ONT data)
-- **Problem**: Default igver screenshots don't show base modification colors from ONT BAMs (5mCG/5hmCG from dorado basecalling).
-- **Solution**: Use `--igv-config` with a preferences file containing:
+- **Problem**: Default igver screenshots don't show base modification colors from ONT BAMs/CRAMs (5mCG/5hmCG from dorado basecalling).
+- **Solution**: Use `--igv-config` with a config file containing:
   ```
   colorBy BASE_MODIFICATION
   ```
   This injects the IGV batch command before each snapshot via the `additional_pref` mechanism in `create_batch_script()`.
+- **Critical**: `colorBy BASE_MODIFICATION_5MC` is **NOT valid** — IGV silently ignores it with no error. Only `BASE_MODIFICATION` and `BASE_MODIFICATION_2COLOR` are valid `colorBy` values. The `_5MC` suffix only works with the `preference` command (`preference SAM.COLOR_BY BASE_MODIFICATION_5MC`).
+- **CRAM support**: Works identically to BAM. Pass the reference FASTA via `--genome /path/to/ref.fna`.
 - **Colors**: Red = methylated CpG, Blue = unmethylated CpG. Intensity reflects modification probability (ML tag).
-- **Requires**: BAM must contain MM/ML tags (produced by dorado, guppy, or similar basecallers).
+- **Quick check**: Colored screenshots are ~2x the file size of gray ones (~80KB vs ~35KB at 600 DPI).
+- **Requires**: BAM/CRAM must contain MM/ML tags (produced by dorado, guppy, or similar basecallers).
+
+### Stale Singularity Bind Variables
+- Always `unset SINGULARITY_BIND APPTAINER_BIND` at the top of igver scripts. Stale bind variables from the login node can cause mount failures inside the container.
 
 ### Running Inside Singularity
 - When calling igver via `singularity exec ... igver`, always pass `--no-singularity` to avoid nested containerization.
