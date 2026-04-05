@@ -290,10 +290,10 @@ def _parse_region_string(region, output_dir, overlap_display='squish', max_panel
 
 
 def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max_panel_height=200,
-                        overlap_display='squish', igv_config=None, output_format='png'):
+                        overlap_display='squish', igv_config=None, color_by=None, output_format='png'):
     """
     Creates an IGV batch script to generate screenshots for the given BAM files and regions.
-    
+
     Parameters:
         paths (list of str): Paths to BAM files.
         regions (list of str): List of regions in 'chr:start-end' format.
@@ -305,6 +305,8 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
         igv_config (str, optional): Path to file containing IGV batch commands to inject before
             each snapshot (default: None). Must use IGV batch command syntax (e.g. 'colorBy BASE_MODIFICATION'),
             not KEY=VALUE properties format.
+        color_by (str, optional): IGV colorBy value to inject before each snapshot (e.g. 'BASE_MODIFICATION').
+            Applied before igv_config commands. Use the CLI --color-by flag or --methylation preset.
 
     Returns:
         str: The path to the generated IGV batch script.
@@ -317,19 +319,26 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     # Generate a unique batch file name
     batch_filename = os.path.join(output_dir, f'{uuid.uuid4()}.batch')
 
-    # Read additional IGV batch commands if provided
-    additional_pref = ""
+    # Build additional_pref: color_by first, then igv_config commands
+    additional_pref_parts = []
+
+    if color_by:
+        additional_pref_parts.append(f'colorBy {color_by}')
+
     if igv_config and os.path.exists(igv_config):
         with open(igv_config, 'r') as f:
-            additional_pref = f.read().strip()
+            config_content = f.read().strip()
         # Warn if any lines look like KEY=VALUE properties format (silently ignored by IGV batch interpreter)
-        for line in additional_pref.splitlines():
+        for line in config_content.splitlines():
             line = line.strip()
             if line and not line.startswith('#') and '=' in line and not line.startswith('preference'):
                 print(f"[WARNING] igv-config line looks like properties format: '{line}'")
                 print(f"  IGV batch scripts do not support KEY=VALUE syntax. Use batch command syntax instead:")
                 print(f"  e.g. 'preference {line.replace('=', ' ')}' or 'colorBy BASE_MODIFICATION'")
                 break  # Warn once, not per line
+        additional_pref_parts.append(config_content)
+
+    additional_pref = '\n'.join(additional_pref_parts)
 
     # Create batch file content
     batch_content = [

@@ -15,12 +15,45 @@ except ImportError:
     import importlib_resources as resources  # Backport for Python 3.7-3.8
 
 
+# Known valid IGV colorBy values. Hard-fail on anything outside this set.
+VALID_COLOR_BY_VALUES = {
+    'BASE_MODIFICATION',
+    'BASE_MODIFICATION_2COLOR',
+    'STRAND',
+    'READ_STRAND',
+    'FIRST_OF_PAIR_STRAND',
+    'PAIR_ORIENTATION',
+    'INSERT_SIZE',
+    'SAMPLE',
+    'TAG',
+    'BISULFITE',
+    'NOMESEQ',
+    'NONE',
+}
+
+# Preset applied when --methylation is set (overridden by any explicit flag)
+_METHYL_PRESET = {
+    'dpi': 600,
+    'max_panel_height': 1000,
+    'overlap_display': 'expand',
+    'color_by': 'BASE_MODIFICATION',
+}
+
+# Normal defaults (used when --methylation is not set)
+_DEFAULTS = {
+    'dpi': 300,
+    'max_panel_height': 200,
+    'overlap_display': 'squish',
+    'color_by': None,
+}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="IGVer: A tool for generating IGV screenshots"
     )
     parser.add_argument(
-        "-i", "--input", nargs="+", required=True, 
+        "-i", "--input", nargs="+", required=True,
         help="Input BAM, BEDPE, VCF, or bigWig file(s), or a .txt file containing paths (one per line)"
     )
     parser.add_argument(
@@ -33,45 +66,65 @@ def parse_args():
         "-g", "--genome", default="hg19", help="Genome reference (default: hg19)"
     )
     parser.add_argument(
-        "--dpi", type=int, default=300, help="DPI for output images (default: 300)"
+        "--dpi", type=int, default=None,
+        help="DPI for output images (default: 300; 600 with --methylation)"
     )
     parser.add_argument(
         "--igv-dir",
-        default="/opt/IGV_2.19.5", 
+        default="/opt/IGV_2.19.5",
         help="Path to IGV installation (default: /opt/IGV_2.19.5)"
     )
     parser.add_argument(
         "-p", "--max-panel-height",
         type=int,
-        default=200,
-        help="Maximum panel height for IGV (default: 200)."
+        default=None,
+        help="Maximum panel height for IGV (default: 200; 1000 with --methylation)"
     )
     parser.add_argument(
         "-d", "--overlap-display",
         choices=["expand", "collapse", "squish"],
-        default="squish",
-        help="Display mode for overlapping reads (default: squish)."
+        default=None,
+        help="Display mode for overlapping reads (default: squish; expand with --methylation)"
     )
     parser.add_argument(
         "-c", "--igv-config",
         help="Path to file containing IGV batch commands to inject before each snapshot (e.g. 'colorBy BASE_MODIFICATION'). Note: use batch command syntax, not KEY=VALUE properties format."
     )
     parser.add_argument(
-        "--singularity-image", 
-        default="docker://sahuno/igver:latest", 
+        "--methylation", "--meth",
+        action="store_true", dest="methylation",
+        help=(
+            "Enable methylation visualization preset: colorBy BASE_MODIFICATION, "
+            "expand display, panel height 1000, DPI 600. "
+            "Any explicit flag overrides the preset (e.g. --methylation --dpi 300)."
+        )
+    )
+    parser.add_argument(
+        "--color-by",
+        dest="color_by",
+        metavar="VALUE",
+        help=(
+            "Set IGV colorBy value (e.g. BASE_MODIFICATION, BASE_MODIFICATION_2COLOR, STRAND). "
+            f"Valid values: {', '.join(sorted(VALID_COLOR_BY_VALUES))}. "
+            "When used with --methylation, this overrides the preset colorBy."
+        )
+    )
+    parser.add_argument(
+        "--singularity-image",
+        default="docker://sahuno/igver:latest",
         help="`singularity` image path (default: docker://sahuno/igver:latest)"
     )
     parser.add_argument(
-        "--singularity-args", 
-        default="-B /home", 
+        "--singularity-args",
+        default="-B /home",
         help='`singularity` arguments string (default: "-B /home")'
     )
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug logging"
     )
     parser.add_argument(
-        "--no-singularity", 
-        action="store_true", 
+        "--no-singularity",
+        action="store_true",
         help="Run IGV directly without Singularity wrapper (auto-detected in containers)"
     )
     parser.add_argument(
@@ -130,6 +183,33 @@ def main():
     os.environ["DISPLAY"] = ""
     args = parse_args()
 
+    # Validate --color-by before anything else
+    if args.color_by and args.color_by not in VALID_COLOR_BY_VALUES:
+        print(
+            f"[ERROR] Unknown --color-by value: '{args.color_by}'\n"
+            f"  Valid values: {', '.join(sorted(VALID_COLOR_BY_VALUES))}",
+            file=sys.stderr
+        )
+        sys.exit(1)
+
+    # Apply methylation preset, then let explicit flags override
+    preset = _METHYL_PRESET if args.methylation else _DEFAULTS
+    if args.dpi is None:
+        args.dpi = preset['dpi']
+    if args.max_panel_height is None:
+        args.max_panel_height = preset['max_panel_height']
+    if args.overlap_display is None:
+        args.overlap_display = preset['overlap_display']
+    # --color-by always wins; fall back to preset colorBy only for --methylation
+    if args.color_by is None:
+        args.color_by = preset['color_by']
+
+    if args.methylation:
+        print(
+            f"[INFO] Methylation preset active: colorBy={args.color_by}, "
+            f"display={args.overlap_display}, panel_height={args.max_panel_height}, dpi={args.dpi}"
+        )
+
     # Parse input paths - handle both .txt file and direct paths
     input_paths = []
     if len(args.input) == 1 and args.input[0].endswith('.txt'):
@@ -176,6 +256,10 @@ def main():
         # Conditionally add `igv_config` if it's provided
         if args.igv_config:
             kwargs["igv_config"] = args.igv_config
+
+        # Conditionally add `color_by` if set (either via --color-by or --methylation preset)
+        if args.color_by:
+            kwargs["color_by"] = args.color_by
 
         # Call the function with unpacked arguments
         _ = load_screenshots(**kwargs)
