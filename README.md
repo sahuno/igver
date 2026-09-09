@@ -1,17 +1,28 @@
 # IGVer
 
-Conveniently take IGV snapshots of multiple BAM files over multiple genomic regions.
+Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic regions.
 
-**New in v0.2.0:**
-- Updated to IGV version 2.19.5 (from 2.17.4)
-- Added support for BED format input files (BED3 and BED6)
-- Improved region file parsing
-- Added support for multiple output formats (PNG, SVG, PDF)
+> **This is [sahuno/igver](https://github.com/sahuno/igver), a fork of [shahcompbio/igver](https://github.com/shahcompbio/igver).**
+> The methylation, parallel-rendering and PDF features documented below live in this fork.
+> PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
-**Container Versions:**
-- `sahuno/igver:latest` - Always the most recent version (recommended)
-- `sahuno/igver:2.19.5` - Specific version with IGV 2.19.5
-- Version tags available starting from 2.19.5
+**New in 1.2.0 (this fork):**
+- `--methylation` / `--meth` — one-flag base-modification coloring for ONT/PacBio data
+- `--color-by` — set any IGV `colorBy` value, validated against IGV's enum (IGV silently ignores typos, so igver hard-fails instead)
+- `-j` / `--jobs` — render regions in parallel across several IGV processes
+- `--stall-timeout` — kill and retry an IGV process that stops producing snapshots (headless error dialogs)
+- `-f pdf` now actually writes PDFs; retries re-render only the *missing* regions
+- `--version` flag
+- **Fixed**: genome aliases (`-g GRCh38` → `hg38`) never resolved in any earlier version — the alias table was loaded from a YAML key that does not exist, so every alias was passed to IGV verbatim
+
+**From 0.2.0:**
+- IGV 2.19.5 (from 2.17.4)
+- BED region input (BED3/BED6)
+- Multiple output formats (PNG, SVG, PDF)
+
+**Container versions:**
+- `sahuno/igver:latest` — most recent (recommended)
+- `sahuno/igver:2.19.5` — pinned to IGV 2.19.5
 
 ## Table of Contents
 - [Features](#features)
@@ -21,13 +32,15 @@ Conveniently take IGV snapshots of multiple BAM files over multiple genomic regi
 - [Usage](#usage)
   - [CLI](#cli)
   - [CLI Options Reference](#cli-options-reference)
+  - [Environment Variables](#environment-variables)
   - [Python API](#python-api)
 - [Supported File Formats](#supported-file-formats)
 - [Output File Naming](#output-file-naming)
 - [Examples](#examples)
 - [Advanced Usage](#advanced-usage)
-  - [DNA Methylation Visualization (ONT)](#dna-methylation-visualization-ont)
+  - [DNA Methylation Visualization (ONT/PacBio)](#dna-methylation-visualization-ontpacbio)
   - [Haplotagged Reads](#working-with-haplotagged-reads)
+  - [Parallel Rendering and Stalled IGV Processes](#parallel-rendering-and-stalled-igv-processes)
   - [Batch Processing](#batch-processing-multiple-samples)
 - [Supported Genomes](#supported-genomes)
 - [Lessons Learned & Common Pitfalls](#lessons-learned--common-pitfalls)
@@ -38,48 +51,53 @@ Conveniently take IGV snapshots of multiple BAM files over multiple genomic regi
 
 ## Features
 - Generate high-resolution IGV screenshots programmatically
-- Support for multiple BAM files and multiple genomic regions
-- BED file support (BED3 and BED6 formats)
-- Run IGV in a containerized environment for reproducibility
-- Integrate with Python scripts using the API
-- Customize IGV display preferences
+- Multiple BAM/CRAM files and multiple genomic regions per run
+- BED region input (BED3/BED6) and legacy region text files
+- Base-modification (methylation) and haplotype coloring
+- Parallel rendering across IGV processes, with a stall watchdog and per-region retry
+- Runs IGV in a container for reproducibility
+- Python API for embedding in analysis scripts
 
 ## Requirements
-- Python 3.7+
+- Python 3.9+ (3.6–3.8 work with the `importlib_resources` backport declared in `setup.py`)
 - Singularity/Apptainer or Docker
-- For local installation: matplotlib, Pillow, PyYAML
+- Python packages: matplotlib, Pillow, PyYAML (installed automatically); `cairosvg` for `-f pdf`
 
 ## Installation
 
-### Option 1: Using Container (Recommended)
+### Option 1: Container (Recommended)
 ```bash
-# For Docker
+# Docker
 docker pull sahuno/igver:latest
 
-# For Singularity/Apptainer
+# Singularity/Apptainer
 singularity pull docker://sahuno/igver:latest
 ```
 
-**Available versions:**
-- `sahuno/igver:latest` - Always the most recent version (recommended)
-- `sahuno/igver:2.19.5` - Specific version with IGV 2.19.5
-
-### Option 2: Local Installation
+### Option 2: From this fork
 ```bash
-pip install igver
+pip install "git+https://github.com/sahuno/igver.git"
+
+# with PDF output support
+pip install "igver[pdf] @ git+https://github.com/sahuno/igver.git"
 ```
-**Note**: Local installation still requires Singularity to run IGV.
+
+> **Do not use `pip install igver` if you need the flags documented here.** PyPI serves upstream
+> `igver 1.1`, which has no `--color-by`, `--methylation`, `-j/--jobs`, `--stall-timeout`, or
+> `--version`, and still carries the genome-alias bug. Check what you have with `igver --version`
+> (it reports the *installed distribution* version, so reinstall after pulling new commits).
+
+**Note**: A local install still requires Singularity/Docker to run IGV itself.
 
 ### Container Usage Important Notes
 
-**Docker**: Works automatically - the container environment is auto-detected.
+**Docker**: works automatically — the container environment is auto-detected.
 
-**Singularity**: You MUST use the `--no-singularity` flag to prevent nested container issues:
+**Singularity**: you must pass `--no-singularity`, otherwise igver tries to launch a second
+container inside the first:
 ```bash
 singularity exec docker://sahuno/igver:latest igver ... --no-singularity
 ```
-
-This is because IGVer was originally designed to wrap IGV in a Singularity container, but when IGVer itself runs in a container, this creates a nested container problem.
 
 ## Quick Start
 
@@ -105,8 +123,6 @@ igver -i sample.bam -r "chr1:1000000-2000000" -o output/
 igver -i sample.bam -r regions.bed -o output/ --no-singularity
 ```
 
-**Important Note for Container Users**: When running IGVer inside a container (Docker or Singularity), you must use the `--no-singularity` flag with Singularity to prevent nested container execution. Docker automatically detects the container environment.
-
 ## Usage
 
 ### CLI
@@ -119,63 +135,72 @@ igver \
   -o ./screenshots
 ```
 
+All tracks passed to `-i` are loaded into the **same** screenshot, stacked as panels — one image
+per region, not one per BAM. Paths must be space-separated; a comma-separated string is treated as
+a single filename.
+
 #### Using BED Files
 ```bash
-# BED3 format (chr, start, end)
-igver \
-  -i sample.bam \
-  -r regions.bed \
-  -o ./screenshots
+# BED3 (chr, start, end)
+igver -i sample.bam -r regions.bed -o ./screenshots
 
-# BED6 format (includes region names in output)
-igver \
-  -i sample.bam \
-  -r regions_with_names.bed \
-  -o ./screenshots
+# BED4+ — the 4th column (name) is appended to the output filename
+igver -i sample.bam -r regions_with_names.bed -o ./screenshots
 ```
 
 #### Multiple Regions
 ```bash
-# Multiple regions in one panel
-igver \
-  -i sample.bam \
-  -r "chr1:1000-2000 chr2:3000-4000" \
-  -o ./screenshots
+# Two loci side by side in ONE image (split-screen)
+igver -i sample.bam -r "chr1:1000-2000 chr2:3000-4000" -o ./screenshots
 
-# Multiple separate regions
-igver \
-  -i sample.bam \
-  -r "chr1:1000-2000" "chr2:3000-4000" \
-  -o ./screenshots
+# Two separate images
+igver -i sample.bam -r "chr1:1000-2000" "chr2:3000-4000" -o ./screenshots
 ```
 
 ### CLI Options Reference
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i`, `--input` | Input BAM/BEDPE/VCF/bigWig file(s), or a `.txt` file with one path per line | *required* |
+| `-i`, `--input` | Input BAM/CRAM/BEDPE/VCF/bigWig file(s), or a single `.txt` file with one path per line | *required* |
 | `-r`, `--regions` | Genomic regions (`chr1:100-200`), region file (`.txt`), or BED file (`.bed`) | *required* |
-| `-o`, `--output` | Output directory for screenshots | `/tmp` |
-| `-g`, `--genome` | Reference genome (supports aliases, e.g. `GRCh38` maps to `hg38`) | `hg19` |
+| `-o`, `--output` | Output directory for screenshots. When left at the default, `$TMPDIR` is used if set, else `/tmp` | `$TMPDIR` or `/tmp` |
+| `-g`, `--genome` | IGV genome id (`hg38`), a supported alias (`GRCh38`), or a path to a reference FASTA/`.genome` | `hg19` |
 | `--dpi` | DPI resolution for output images | `300` |
+| `--igv-dir` | Path to the IGV installation inside the container | `/opt/IGV_2.19.5` |
 | `-p`, `--max-panel-height` | Maximum pixel height per track panel | `200` |
 | `-d`, `--overlap-display` | Read display mode: `expand`, `collapse`, or `squish` | `squish` |
-| `-c`, `--igv-config` | Path to file with additional IGV batch commands injected before each snapshot | *none* |
+| `-c`, `--igv-config` | File of additional IGV **batch commands** injected before each snapshot (not `KEY=VALUE` properties) | *none* |
 | `-f`, `--format` | Output format: `png`, `svg`, or `pdf` (pdf requires `cairosvg`) | `png` |
-| `--color-by` | IGV `colorBy` value injected before each snapshot, e.g. `BASE_MODIFICATION` or `'TAG HP'`; unknown values are rejected | *none* |
+| `--color-by` | IGV `colorBy` value injected before each snapshot, e.g. `BASE_MODIFICATION` or `'TAG HP'`; unknown values are rejected with exit code 1 | *none* |
 | `--methylation`, `--meth` | Shortcut for `--color-by BASE_MODIFICATION` | `false` |
 | `-j`, `--jobs` | Number of IGV processes run in parallel; regions are split into this many chunks (each process is its own JVM) | `1` |
-| `--stall-timeout` | Kill IGV if no new snapshot appears for this many seconds, then retry the missing regions once; guards against IGV blocking on an error dialog in headless mode. `0` disables | `600` |
+| `--stall-timeout` | Kill IGV if no new snapshot appears for this many seconds, then retry the missing regions once; guards against IGV blocking on a headless error dialog. `0` disables | `600` |
 | `--singularity-image` | Singularity/Docker image path | `docker://sahuno/igver:latest` |
-| `--singularity-args` | Additional Singularity arguments (e.g. bind mounts) | `-B /home` |
-| `--no-singularity` | Run IGV directly without Singularity wrapper (**required** when running inside a container) | `false` |
-| `--debug` | Enable debug logging | `false` |
+| `--singularity-args` | Additional Singularity arguments; input/output/TMPDIR binds are added automatically (see [pitfall 3](#3-bind-mounting-data-directories)) | `-B /home` |
+| `--no-singularity` | Run IGV directly without the Singularity wrapper (**required** when igver itself runs inside a container) | `false` |
+| `--debug` | Enable debug logging (prints the IGV command and batch progress) | `false` |
+| `--version` | Print the igver version and exit | — |
 
-**Notes on `--igv-config`**: This file can contain any valid [IGV batch command](https://igv.org/doc/desktop/#UserGuide/tools/batch/). The contents are injected after each `goto` and before each `snapshot`, allowing per-region customization of the display. Example commands:
+**Notes on `--igv-config`**: the file may contain any valid
+[IGV batch command](https://igv.org/doc/desktop/#UserGuide/tools/batch/). Its contents are injected
+after each `goto` and before each `snapshot`. If `--color-by` is also given, the `colorBy` line is
+emitted first, then the config file. igver warns if a line looks like `KEY=VALUE` properties syntax,
+which the IGV batch interpreter silently ignores. Example commands:
 - `colorBy BASE_MODIFICATION` — color reads by DNA methylation (ONT/PacBio)
 - `colorBy TAG HP` — color reads by haplotype tag
 - `group TAG HP` — group reads by haplotype
 - `sort READNAME` — sort reads by name
+
+### Environment Variables
+
+| Variable | Effect |
+|----------|--------|
+| `IGVER_IMAGE` | Overrides `--singularity-image` (useful for pinning a local `.sif` cluster-wide) |
+| `IGVER_IN_CONTAINER=1` | Forces container mode — igver will not wrap IGV in Singularity |
+| `IGVER_NO_SINGULARITY=1` | Same as above; equivalent to always passing `--no-singularity` |
+| `TMPDIR` | Used as the output directory when `-o` is left at its default, and always bind-mounted into the container |
+
+Container mode is also auto-detected via `/.dockerenv`, `$SINGULARITY_CONTAINER`, and `/proc/1/cgroup`.
 
 ### Python API
 
@@ -183,7 +208,7 @@ igver \
 ```python
 import igver
 
-# Generate screenshots
+# Returns matplotlib figures (PNG output + load_figures=True, the defaults)
 figures = igver.load_screenshots(
     paths=['tumor.bam', 'normal.bam'],
     regions=['chr1:1000000-2000000', 'chr2:3000000-4000000'],
@@ -191,51 +216,97 @@ figures = igver.load_screenshots(
     genome='hg19'
 )
 
-# Save figures
 for i, fig in enumerate(figures):
     fig.savefig(f'screenshot_{i}.png', dpi=300, bbox_inches='tight')
+```
+
+```python
+# Returns file paths — no matplotlib figures held in memory.
+# Prefer this for large region sets; it is what the CLI uses.
+output_paths = igver.load_screenshots(
+    paths=['ont.bam'],
+    regions=['regions.bed'],
+    output_dir='./screenshots',
+    genome='hg38',
+    color_by='BASE_MODIFICATION',
+    jobs=4,
+    load_figures=False,
+)
 ```
 
 #### API Reference
 ```python
 igver.load_screenshots(
-    paths,              # List of input files
-    regions,            # List of regions or BED file
-    output_dir='/tmp',  # Output directory
-    genome='hg19',      # Reference genome
+    paths,                     # list of input files (BAM/CRAM/VCF/BEDPE/bigWig)
+    regions,                   # list of regions, or a path to a .bed / .txt region file
+    output_dir='/tmp',         # '/tmp' resolves to $TMPDIR when that is set
+    genome='hg19',             # IGV genome id, alias, or reference FASTA path
     igv_dir='/opt/IGV_2.19.5',
-    overwrite=True,     # Overwrite existing files
-    remove_png=True,    # Remove temporary PNGs
-    dpi=300,            # Figure resolution
+    overwrite=True,            # remove pre-existing outputs before rendering
+    remove_png=True,           # delete image files after loading them into figures
+    dpi=300,
     singularity_image='docker://sahuno/igver:latest',
-    **kwargs            # Additional IGV options
+    singularity_args='-B /home',
+    debug=False,
+    output_format='png',       # 'png' | 'svg' | 'pdf'
+    use_singularity=None,      # None = auto-detect container environment
+    load_figures=True,         # False returns paths instead of matplotlib figures
+    jobs=1,                    # parallel IGV processes
+    stall_timeout=600,         # seconds without a new snapshot before kill+retry
+    **kwargs                   # tag, max_panel_height, overlap_display, igv_config, color_by
 )
+```
+
+**Return value**: matplotlib `Figure` objects only when `output_format='png'` **and**
+`load_figures=True`. Otherwise (SVG/PDF output, or `load_figures=False`) a list of output file
+paths is returned.
+
+```python
+# Generate the IGV batch script without running IGV
+batch_file, output_paths = igver.create_batch_script(
+    paths=['sample.bam'],
+    regions=['chr1:1000-2000'],
+    output_dir='screenshots/',
+    genome='hg38',
+    color_by='BASE_MODIFICATION',
+)
+
+# Run a batch script yourself
+igver.run_igv(batch_file, output_paths, use_singularity=False)
 ```
 
 ## Supported File Formats
 
 ### Input Files
-- **BAM** files (requires .bai index files)
-- **BEDPE** files (for structural variants)
-- **VCF** files (variant calls)
-- **bigWig** files (coverage tracks)
+- **BAM** (requires `.bai` index)
+- **CRAM** (requires `.crai` index; pass the reference FASTA via `--genome`)
+- **BEDPE** (structural variants)
+- **VCF** (variant calls)
+- **bigWig** (coverage tracks)
+- **`.txt`** manifest: one track path per line, `#` comments and blank lines skipped, `~` expanded
 
 ### Region Files
-- **BED3**: `chromosome<TAB>start<TAB>end`
-- **BED6**: `chromosome<TAB>start<TAB>end<TAB>name<TAB>score<TAB>strand`
-- **Text**: Custom format with optional annotations
+- **BED3**: `chrom<TAB>start<TAB>end`
+- **BED4/BED6**: a non-empty 4th column (name) is appended to the output filename; `track`/`browser`/`#` lines are skipped
+- **Text**: whitespace-separated `chr:start-end` tokens, plus an optional trailing tag; multiple regions on one line become one split-screen image
 
 ### Output Formats
-- **PNG** (default): Raster format, best for publications
-- **SVG**: Vector format, scalable without quality loss
-- **PDF**: Converted from SVG, requires `cairosvg` (`pip install igver[pdf]`)
+- **PNG** (default): raster
+- **SVG**: vector, written directly by IGV
+- **PDF**: IGV writes SVG, then igver converts it with `cairosvg` (`pip install cairosvg`).
+  Via the CLI the intermediate `.svg` files are **kept** next to the `.pdf`s.
 
 ## Output File Naming
 
+The extension follows `-f/--format` (`svg` for both `-f svg` and the intermediate of `-f pdf`):
+
 - Single region: `chr1-1000000-2000000.png`
-- BED with name: `chr1-1000000-2000000.gene_name.png`
-- Multiple regions: `chr1-1000-2000.chr2-3000-4000.png`
-- With annotation: `chr1-1000000-2000000.annotation.png`
+- BED with a name column: `chr1-1000000-2000000.gene_name.png`
+- Split-screen region string: `chr1-1000-2000.chr2-3000-4000.png`
+- Region text file with a tag: `chr1-1000000-2000000.translocation.png`
+
+Colons become hyphens; spaces between regions become dots. A BED name column takes precedence over
+an explicit `tag`. All tracks given to `-i` share one image per region.
 
 ## Examples
 
@@ -247,98 +318,99 @@ Creates: `./chr1-1000000-2000000.png`
 
 ### Example 2: Structural Variant Visualization
 ```bash
-# Create a regions file for a translocation
-echo -e "chr8:128750000-128760000\tchr14:106330000-106340000\ttranslocation" > sv_regions.bed
+# Region text file for a translocation: two loci + a tag, on one line
+printf 'chr8:128750000-128760000\tchr14:106330000-106340000\ttranslocation\n' > sv_regions.txt
 
 igver \
   -i tumor.bam normal.bam \
-  -r sv_regions.bed \
+  -r sv_regions.txt \
   -o ./sv_screenshots
 ```
+Creates: `./sv_screenshots/chr8-128750000-128760000.chr14-106330000-106340000.translocation.png`
 
 ### Example 3: Different Output Formats
 ```bash
-# Generate SVG (vector format)
+# SVG (vector)
 igver -i sample.bam -r "chr1:1000000-2000000" -f svg -o ./
 
-# Generate PDF (requires cairosvg)
-pip install igver[pdf]  # Install PDF support
+# PDF (requires cairosvg; leaves the intermediate .svg next to the .pdf)
+pip install cairosvg
 igver -i sample.bam -r "chr1:1000000-2000000" -f pdf -o ./
 ```
 
-### Example 4: Custom IGV Preferences
+### Example 4: Custom IGV Batch Commands
 ```bash
-# Create custom preferences
 cat > custom_prefs.txt << EOF
 colorBy TAG HP
 sort READNAME
 group TAG RG
 EOF
 
-igver \
-  -i sample.bam \
-  -r regions.bed \
-  -c custom_prefs.txt \
-  -o ./screenshots
+igver -i sample.bam -r regions.bed -c custom_prefs.txt -o ./screenshots
 ```
 
 ## Advanced Usage
 
 ### DNA Methylation Visualization (ONT/PacBio)
 
-BAM and CRAM files from ONT (dorado/guppy) or PacBio contain base modification tags (MM/ML) for 5mCG, 5hmCG, 6mA, etc. IGV can color reads by these modifications when configured correctly.
+BAM/CRAM files from ONT (dorado/guppy) or PacBio carry base-modification tags (`MM`/`ML`) for
+5mCG, 5hmCG, 6mA, etc. Use `--methylation` (alias `--meth`):
 
-**Step 1**: Create an IGV config file for methylation:
-```bash
-echo "colorBy BASE_MODIFICATION" > methylation_prefs.txt
-```
-
-**Step 2**: Run igver with the config:
 ```bash
 # Avoid stale bind variables that can cause mount failures
 unset SINGULARITY_BIND APPTAINER_BIND 2>/dev/null || true
 
-singularity exec \
-  -B /data1 \
-  docker://sahuno/igver:latest \
+singularity exec -B /data1 docker://sahuno/igver:latest \
   igver \
     -i sample_modBaseCalls_dedup_sorted.bam \
     -r regions.bed \
     -o ./IGV_hg38_methylation \
     -g hg38 \
+    --methylation \
     --dpi 600 \
     -d expand \
     -p 1000 \
-    --no-singularity \
-    -c methylation_prefs.txt
+    --no-singularity
 ```
 
-**CRAM files** work identically to BAM — just pass the reference FASTA via `--genome`:
+`--methylation` is exactly `--color-by BASE_MODIFICATION`. Use `--color-by` directly for the
+two-color variant, or `-c` when you need several batch commands:
+
 ```bash
-igver -i sample.cram -r regions.bed --genome /path/to/reference.fna -c methylation_prefs.txt ...
+igver ... --color-by BASE_MODIFICATION_2COLOR      # equivalent to a one-line -c file
+printf 'colorBy BASE_MODIFICATION\ngroup TAG HP\n' > meth_hp.txt && igver ... -c meth_hp.txt
+```
+
+**CRAM files** work identically to BAM — pass the reference FASTA via `--genome`:
+```bash
+igver -i sample.cram -r regions.bed --genome /path/to/reference.fna --methylation ...
 ```
 
 **Color interpretation**:
 - **Red** = methylated CpG (5mC)
 - **Blue** = unmethylated CpG
-- Color intensity reflects the modification probability (from the ML tag)
+- Color intensity reflects the modification probability (from the `ML` tag)
 
-**Requirements**: The input BAM/CRAM must contain `MM` and `ML` tags produced by a methylation-aware basecaller (dorado, guppy, etc.).
+**Requirements**: the input BAM/CRAM must contain `MM`/`ML` tags from a methylation-aware
+basecaller (dorado, guppy, etc.).
 
 **Valid `colorBy` values for base modifications**:
 
 | Value | Effect |
 |-------|--------|
-| `BASE_MODIFICATION` | Color by all base modifications (5mC, 6mA, etc.) |
+| `BASE_MODIFICATION` | Color by all base modifications (5mC, 6mA, ...) |
 | `BASE_MODIFICATION_2COLOR` | Two-color mode (red = methylated, blue = unmethylated) |
 
-> **Warning**: `colorBy BASE_MODIFICATION_5MC` is **not valid** and will be silently ignored by IGV. Use `BASE_MODIFICATION` instead. The `_5MC` suffix only works with the `preference` command: `preference SAM.COLOR_BY BASE_MODIFICATION_5MC`.
+> **Warning**: `colorBy BASE_MODIFICATION_5MC` is **not valid** — IGV silently ignores it. Only the
+> two values above are accepted for `colorBy`; the `_5MC` suffix works solely with the `preference`
+> command (`preference SAM.COLOR_BY BASE_MODIFICATION_5MC`). `--color-by` validates against IGV's
+> enum and exits 1 on an unknown value, but a bad value inside a `-c` file still reaches IGV unchecked.
 
-**Quick diagnostic**: Methylation-colored screenshots are roughly **2x the file size** of gray (uncolored) screenshots at the same locus (~80KB vs ~35KB at 600 DPI). This is a fast way to verify coloring worked without opening every image.
+**Quick diagnostic**: methylation-colored screenshots are roughly **2x the file size** of gray ones
+at the same locus (~80KB vs ~35KB at 600 DPI) — a fast way to confirm coloring worked.
 
 ### Working with Haplotagged Reads
 ```bash
-# Create IGV preferences for haplotype visualization
 cat > haplotype_view.batch << EOF
 group TAG HP
 colorBy TAG HP
@@ -351,102 +423,145 @@ igver \
   -c haplotype_view.batch \
   -p 500 \
   -o ./haplotype_screenshots
+
+# Coloring only (no grouping) needs no config file — quote the two-word value:
+igver -i haplotagged.bam -r regions.bed --color-by 'TAG HP' -o ./haplotype_screenshots
 ```
+
+### Parallel Rendering and Stalled IGV Processes
+
+For large region sets, split the work across IGV processes with `-j/--jobs`:
+
+```bash
+igver -i sample.bam -r 1483_L1_elements.bed -j 8 -o ./screenshots
+```
+
+- Regions are split into `jobs` contiguous chunks; each chunk gets its own batch script, IGV
+  process and JVM — **budget memory per job**, not per run.
+- `--stall-timeout` (default 600s) kills an IGV process that has produced no new snapshot for that
+  long, then retries the regions still missing. This is aimed at IGV blocking on an error dialog
+  that nobody can dismiss in headless mode. `--stall-timeout 0` disables the watchdog.
+- Rendering is attempted at most **2 iterations**; the second pass re-renders only the snapshots
+  that are still missing, not the whole batch.
+- If snapshots are still missing after that, igver raises and **keeps the batch script** for the
+  missing regions so you can run it by hand. IGV's own errors are in `~/igv/igv0.log`.
 
 ### Batch Processing Multiple Samples
 ```python
-import igver
 import glob
+import os
 
-# Process all BAM files in a directory
+import igver
+
 bam_files = glob.glob("samples/*.bam")
 regions = ["chr1:1000000-2000000", "chr2:3000000-4000000"]
 
 for bam in bam_files:
     sample_name = os.path.basename(bam).replace('.bam', '')
-    figures = igver.load_screenshots(
+    output_paths = igver.load_screenshots(
         paths=[bam],
         regions=regions,
-        output_dir=f'screenshots/{sample_name}'
+        output_dir=f'screenshots/{sample_name}',
+        load_figures=False,  # avoids holding a matplotlib figure per region
     )
 ```
 
 ## Supported Genomes
 
-IGVer supports genome aliases that are automatically resolved. For example, passing `-g GRCh38` is equivalent to `-g hg38`.
+Pass any IGV genome id directly (`hg19`, `hg38`, `mm10`, `mm39`, `hs1`, ...), a path to a reference
+FASTA/`.genome` file, or one of the aliases below, which igver resolves before handing the value to
+IGV. Anything not in the table is passed through unchanged.
 
-| Organism | Aliases | IGV Genome |
-|----------|---------|------------|
-| Human | hg19, hg37, b37, GRCh37 | hg19 |
-| Human | hg38, GRCh38 | hg38 |
-| Human | hs1 | hs1 |
-| Mouse | mm10, GRCm38 | mm10 |
-| Mouse | mm39, GRCm39 | mm39 |
-| Rat | rn6, Rnor_6.0 | rn6 |
-| Dog | canFam3, CanFam3.1 | canFam3 |
-| Zebrafish | danRer10, GRCz10 | danRer10 |
-| Zebrafish | danRer11, GRCz11 | danRer11 |
-| Fly | dm6, BDGP6 | dm6 |
-| Worm | ce11, WBcel235 | ce11 |
-| Yeast | sacCer3, R64 | sacCer3 |
-| Arabidopsis | tair10, TAIR10 | tair10 |
+| Organism | Alias | IGV genome |
+|----------|-------|------------|
+| Human | `GRCh37`, `hg37`, `b37` | hg19 |
+| Human | `GRCh38` | hg38 |
+| Human | `hg38_1kg`, `hs1` | hg38_1kg, hs1 |
+| Mouse | `GRCm38` | mm10 |
+| Mouse | `GRCm39` | mm39 |
+| Rat | `Rnor_6.0` | rn6 |
+| Dog | `CanFam3.1`, `CanFam5` | canFam3, canFam5 |
+| Chicken | `GRCg6a` | galGal6 |
+| Zebrafish | `GRCz10`, `GRCz11` | danRer10, danRer11 |
+| Fly | `BDGP6`, `BDGP5` | dm6, dm3 |
+| Worm | `WBcel235` | ce11 |
+| Yeast | `R64-1-1` | sacCer3 |
+| Arabidopsis | `TAIR10` | tair10 |
+| Cow | `UMD3.1`, `ARS-UCD1.2` | bosTau8, bosTau9 |
+| Primates | `Mmul_8.0.1`, `Pan_tro_3.0`, `Ggor_gorGor4`, `Ggor_gorGor6`, `NHGRI_mPanPan1` | macFas5, panTro4, gorGor4, gorGor6, panPan2 |
 
-See `igver/data/genome_map.yaml` for the full list.
+The authoritative list is `igver/data/genome_map.yaml`.
+
+> Alias resolution was broken in every release up to and including upstream 1.1 (the alias table was
+> read from a nonexistent `aliases:` YAML key). If you are on an older build, pass the IGV genome id
+> directly.
 
 ## Lessons Learned & Common Pitfalls
 
 ### 1. Chromosome Naming Mismatch (`chr` prefix)
 
-This is the most common issue. BAM files aligned to Broad's `Homo_sapiens_assembly38.fasta` (GRCh38) use `chr1`, `chr2`, etc. However, many tools (e.g. L1EM, some BED generators) output regions without the `chr` prefix (`1`, `2`, etc.). IGV's `hg38` genome expects `chr`-prefixed names.
+The most common issue. BAMs aligned to Broad's `Homo_sapiens_assembly38.fasta` use `chr1`, `chr2`;
+many tools (L1EM, some BED generators) emit `1`, `2`. IGV's `hg38` expects the `chr` prefix.
 
-**Symptom**: Empty screenshots or "region not found" errors.
+**Symptom**: empty screenshots or "region not found" errors.
 
-**Fix**: Add `chr` prefix to BED files before passing to igver:
+**Fix**:
 ```bash
-awk 'BEGIN{OFS="\t"} { if ($1 !~ /^chr/) $1 = "chr" $1; print }' regions.bed > regions_chrPrefix.bed
+awk 'BEGIN{OFS="\t"} { if ($1 !~ /^chr/) $1 = "chr" $1; print }' regions.bed \
+  > regions.hg38.chrPrefix.bed
 ```
 
-**Prevention**: Always verify that your BAM header (`samtools view -H file.bam | grep @SQ | head`) and region file use the same chromosome naming convention.
+**Prevention**: check that `samtools view -H file.bam | grep @SQ | head` and your region file agree.
 
 ### 2. Nested Container Execution
 
-When running igver inside a Singularity container, you **must** pass `--no-singularity`. Otherwise igver will attempt to launch a second Singularity container inside the first one, which will fail.
+When igver itself runs inside a Singularity container, pass `--no-singularity`, or it will try to
+start a second container inside the first:
 
 ```bash
 # Correct
 singularity exec docker://sahuno/igver:latest igver ... --no-singularity
 
-# Wrong - will fail with nested container error
+# Wrong — nested container error
 singularity exec docker://sahuno/igver:latest igver ...
 ```
 
-Docker containers are auto-detected and do not need this flag.
+Docker is auto-detected and needs no flag. `IGVER_NO_SINGULARITY=1` has the same effect as the flag.
 
 ### 3. Bind-Mounting Data Directories
 
-When using Singularity, all directories containing your input files (BAMs, BED files, IGV config) and the output directory must be bind-mounted:
+igver adds bind mounts automatically for the directory of **every input track** (both the absolute
+and the resolved-symlink path, so symlinked BAMs work), the **output directory**, and `$TMPDIR`.
+Those you do not need to pass yourself.
+
+You still need `--singularity-args`/`-B` for paths igver cannot see in `-i`/`-o`:
+- the reference FASTA passed via `--genome`
+- the `--igv-config` file, if it lives outside the input/output trees
+- index files stored away from their BAM/CRAM
 
 ```bash
-singularity exec \
-  --bind /data1/project,/data1/references,/home \
-  docker://sahuno/igver:latest \
-  igver ... --no-singularity
+igver -i sample.cram -r regions.bed -g /data1/references/hg38.fa \
+  --singularity-args "-B /home -B /data1/references" -o ./screenshots
 ```
 
-If a path is not mounted, igver will not be able to read your files inside the container.
+Also `unset SINGULARITY_BIND APPTAINER_BIND` first — stale bind variables from a login node cause
+mount failures on compute nodes.
 
 ### 4. Large Region Sets (>500 regions)
 
-Generating screenshots for hundreds or thousands of regions (e.g., 1,483 L1 elements) can take a long time because each region requires IGV to navigate and render.
+Hundreds or thousands of regions (e.g. 1,483 L1 elements) take a long time — IGV navigates and
+renders each one.
 
 **Recommendations**:
-- Run in a `screen` or `tmux` session, or submit as a SLURM job
-- igver has a built-in retry mechanism (up to 2 iterations) for failed screenshots
-- Consider splitting very large BED files and running in parallel
+- Use `-j/--jobs` to render chunks in parallel (each job is a separate JVM — size memory accordingly)
+- Keep `--stall-timeout` enabled so one wedged IGV process cannot hang the whole run
+- Run under `screen`/`tmux` or submit as a SLURM job
+- Use `load_figures=False` in the Python API (the CLI already does) to avoid one matplotlib figure per region
 
 ### 5. Display Mode for Long Reads (ONT/PacBio)
 
-For long-read data, use `-d expand` and a large panel height (`-p 1000` or higher) to see individual reads clearly. The default `squish` mode compresses reads and may hide important details like methylation patterns.
+Use `-d expand` with a large panel height (`-p 1000` or more) so individual reads — and their
+methylation coloring — are visible. The default `squish` compresses reads and hides that detail.
 
 ```bash
 igver -i ont_reads.bam -r regions.bed -d expand -p 1000 --dpi 600 -o ./screenshots
@@ -454,48 +569,55 @@ igver -i ont_reads.bam -r regions.bed -d expand -p 1000 --dpi 600 -o ./screensho
 
 ## Performance Tips
 
-- **Pre-pull containers**: Download container images before running to avoid delays
-- **Use absolute paths**: Provide absolute paths for files to avoid binding issues
-- **Bind directories**: Use `-B` or `--bind` flags to mount data directories
-- **Memory allocation**: Ensure sufficient memory for large genomic regions
-- **Parallel processing**: Process multiple samples in parallel when possible
+- **Pre-pull containers** (or pin a local `.sif` with `IGVER_IMAGE`) so runs do not pay the pull cost
+- **Use absolute paths** for inputs — they are what gets written into the IGV batch script
+- **Parallelize with `-j`** rather than launching several igver processes by hand
+- **Skip figure loading** (`load_figures=False`) for large runs
+- **Budget memory per job**: every `-j` chunk starts its own JVM
 
 ## Troubleshooting
 
 ### Container Issues
-- **"singularity: command not found" error when using Singularity**: You must use the `--no-singularity` flag:
+- **`singularity: command not found` inside a container**: pass `--no-singularity`
   ```bash
   singularity exec docker://sahuno/igver:latest igver ... --no-singularity
   ```
-  This prevents IGVer from trying to run Singularity inside the container.
-
-- **Permission denied**: Add bind flags for your data directories
+- **Permission denied / file not found inside the container**: bind the directory holding the
+  reference or config file (input, output and `$TMPDIR` are bound automatically)
   ```bash
   singularity exec -B /data,/home docker://sahuno/igver:latest igver ... --no-singularity
   ```
-
-- **Image not found**: Pull the image first
-  ```bash
-  singularity pull docker://sahuno/igver:latest
-  ```
+- **Image not found**: `singularity pull docker://sahuno/igver:latest`
 
 ### Common Errors
-- **No screenshots generated**: 
-  - Check if BAM files have indexes (.bai files)
-  - Verify chromosome names match reference genome (chr1 vs 1)
+- **`Failed to generate all PNG files after 2 iterations`**: igver keeps the batch script for the
+  regions that failed — the path is in the error message. Run it manually with `--debug`, and read
+  `~/igv/igv0.log` for IGV's own error.
+- **No screenshots generated**:
+  - Check the BAM/CRAM index (`.bai`/`.crai`) exists
+  - Check chromosome naming (`chr1` vs `1`)
   - Check output directory permissions
-
-- **Region not found**:
-  - Verify chromosome naming convention
-  - Check if regions are within chromosome bounds
-  - Ensure genome version matches your data
+- **Run hangs, no new files**: IGV is probably blocked on a headless error dialog — that is what
+  `--stall-timeout` is for; lower it (e.g. `--stall-timeout 120`) to fail faster.
+- **`--color-by` rejected**: the value is validated against IGV's `colorBy` enum. The error lists
+  every accepted value. Quote two-word values: `--color-by 'TAG HP'`.
+- **`igv-config line looks like properties format` warning**: IGV batch scripts take commands
+  (`colorBy BASE_MODIFICATION`), not `KEY=VALUE`. Use `preference KEY VALUE` for a preference.
 
 ### IGV Display Issues
-- **Screenshot width**: Modify IGV preferences file
-  ```bash
-  # In container: /opt/IGV_2.19.5/prefs.properties
-  # Set: IGV.Bounds=0,0,800,480 for 800px width
-  ```
+- Screenshots are rendered on a fixed 1920x1080 virtual display (`xvfb-run --server-args="-screen 0
+  1920x1080x24"` in `run_igv`). Increase `--dpi` for higher-resolution output and `-p` for taller
+  read panels; the virtual screen width is not currently configurable from the CLI.
+
+## Testing
+
+```bash
+# Unit tests that do not need IGV
+pytest test/test_genome_aliases.py test/test_bed_support.py -q
+
+# Full suite (requires Singularity and the igver image)
+pytest test/test_cli.py
+```
 
 ## License
 
@@ -503,17 +625,21 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## Authors
 
-- Seongmin Choi ([@soymintc](https://github.com/soymintc)) - Original author
+- Seongmin Choi ([@soymintc](https://github.com/soymintc)) — original author
+- Samuel Ahuno ([@sahuno](https://github.com/sahuno)) — this fork (methylation/colorBy flags,
+  parallel rendering, stall watchdog, PDF output, genome-alias fix)
 - Contributors welcome!
 
 ## Citation
 
 If you use IGVer in your research, please cite:
 ```
-Choi, S. (2024). IGVer: Automated IGV Screenshot Generation for Genomics. 
+Choi, S. (2024). IGVer: Automated IGV Screenshot Generation for Genomics.
 GitHub: https://github.com/shahcompbio/igver
 ```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please open a Pull Request against
+[sahuno/igver](https://github.com/sahuno/igver); changes intended for upstream go to
+[shahcompbio/igver](https://github.com/shahcompbio/igver).
