@@ -7,7 +7,7 @@ import yaml
 
 # Add package root to sys.path when running as a script
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from igver import load_screenshots
+from igver import __version__, load_screenshots
 
 try:
     from importlib import resources  # Python 3.9+
@@ -30,6 +30,10 @@ VALID_COLOR_BY_VALUES = {
 def parse_args():
     parser = argparse.ArgumentParser(
         description="IGVer: A tool for generating IGV screenshots"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"igver {__version__}",
+        help="Print the igver version and exit"
     )
     parser.add_argument(
         "-i", "--input", nargs="+", required=True,

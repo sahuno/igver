@@ -65,3 +65,16 @@ def test_nested_aliases_layout_supported(tmp_path, monkeypatch):
 
     mapping = cli._load_genome_mappings()
     assert mapping == {"GRCh38": "hg38", "GRCm38": "mm10"}
+
+
+def test_version_flag_exits_zero():
+    """`igver --version` prints the installed version and exits 0."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "igver.cli", "--version"],
+        capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().startswith("igver "), proc.stdout
