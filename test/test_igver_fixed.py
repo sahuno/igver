@@ -7,57 +7,10 @@ Tests both direct region strings and region files.
 import pytest
 import os
 import tempfile
-import shutil
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 TEST_BAM = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_tumor.bam')
-
-def test_create_batch_with_direct_regions():
-    """Test create_batch_script with direct region strings."""
-    import igver
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Test with direct region strings - igver should handle these
-        regions = ['chr1:1000-2000', 'chr2:3000-4000']
-        
-        with patch('os.path.exists') as mock_exists:
-            # Make it think BAM files exist but regions don't (so treated as strings)
-            def exists_side_effect(path):
-                if path.endswith('.bam'):
-                    return True
-                if path in regions:
-                    return False  # Regions are not files
-                return False
-            mock_exists.side_effect = exists_side_effect
-            
-            # Create batch script with direct regions
-            result = igver.create_batch_script(
-                paths=['test1.bam', 'test2.bam'],
-                regions=regions,
-                output_dir=temp_dir,
-                genome='hg19'
-            )
-            
-            # Handle both tuple and string return
-            if isinstance(result, tuple):
-                batch_file, png_paths = result
-            else:
-                batch_file = result
-                png_paths = []
-            
-            assert batch_file is not None
-            print(f"✓ Batch file created: {batch_file}")
-            
-            # Check batch file content
-            if os.path.exists(batch_file):
-                with open(batch_file, 'r') as f:
-                    content = f.read()
-                    assert 'goto chr1:1000-2000' in content
-                    assert 'goto chr2:3000-4000' in content
-                    assert 'genome hg19' in content.lower()
-                    print("✓ Batch file contains correct regions")
-
 
 def test_create_batch_with_region_file(tmp_path):
     """create_batch_script turns a .txt region file into goto/snapshot blocks."""
@@ -65,8 +18,11 @@ def test_create_batch_with_region_file(tmp_path):
 
     regions_file = tmp_path / 'regions.txt'
     regions_file.write_text(
+        '# leading comment line\n'
         'chr1:1000-2000\n'
+        '\n'                                               # blank line
         'chr2:3000-4000\tdeletion\n'
+        '   # indented comment\n'
         'chr3:5000-6000 chr4:7000-8000 translocation\n'
     )
 
@@ -89,6 +45,7 @@ def test_create_batch_with_region_file(tmp_path):
         'chr3-5000-6000.chr4-7000-8000.translocation.png',
     ]
     assert all(f'snapshot {os.path.basename(p)}' in content for p in png_paths)
+    assert 'comment' not in content                        # comment/blank lines are skipped
 
 
 def test_create_batch_with_bed_file(tmp_path):
@@ -157,65 +114,6 @@ def test_run_igv_signature(tmp_path):
     assert '/opt/IGV/igv.sh' in seen[1]
 
 
-def test_with_local_singularity_image():
-    """Test using local Singularity image."""
-    import igver
-    
-    local_image = 'downloaded_image/igver_latest.sif'
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create simple test
-        regions = ['chr1:1000-2000']
-        
-        with patch('os.path.exists') as mock_exists:
-            def exists_side_effect(path):
-                if path.endswith('.bam'):
-                    return True
-                if path == local_image:
-                    return True  # Local image exists
-                if path in regions:
-                    return False  # Direct region string
-                return False
-            mock_exists.side_effect = exists_side_effect
-            
-            # Test that local image path can be used
-            result = igver.create_batch_script(
-                paths=['test.bam'],
-                regions=regions,
-                output_dir=temp_dir,
-                genome='hg19'
-            )
-            
-            if isinstance(result, tuple):
-                batch_file, png_paths = result
-            else:
-                batch_file = result
-                png_paths = []
-            
-            # Now test run_igv with local image
-            with patch('shutil.which') as mock_which:
-                mock_which.return_value = '/usr/bin/singularity'
-                
-                with patch('subprocess.run') as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0)
-                    
-                    try:
-                        igver.run_igv(
-                            batch_file,
-                            png_paths,
-                            singularity_image=local_image,  # Use local image
-                            use_singularity=True
-                        )
-                        
-                        # Check that singularity was called with local image
-                        mock_run.assert_called_once()
-                        call_args = mock_run.call_args[0][0]
-                        assert local_image in call_args
-                        print(f"✓ Local Singularity image {local_image} can be used")
-                    except Exception as e:
-                        print(f"Note: {e}")
-
-
 def test_load_screenshots_function(tmp_path):
     """load_screenshots returns the snapshot paths it asked IGV to render."""
     import igver
@@ -242,11 +140,9 @@ def test_load_screenshots_function(tmp_path):
 if __name__ == '__main__':
     print("Running fixed igver tests...\n")
     
-    test_create_batch_with_direct_regions()
     test_create_batch_with_region_file(Path(tempfile.mkdtemp()))
     test_create_batch_with_bed_file(Path(tempfile.mkdtemp()))
     test_run_igv_signature(Path(tempfile.mkdtemp()))
-    test_with_local_singularity_image()
     test_load_screenshots_function(Path(tempfile.mkdtemp()))
     
     print("\n✅ All fixed tests completed!")

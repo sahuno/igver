@@ -374,13 +374,15 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     additional_pref = '\n'.join(additional_pref_parts)
 
     # Create batch file content
+    # Absolute paths: IGV resolves relative paths against the batch file's directory, and inside
+    # a container the working directory may not be the caller's.
     batch_content = [
         'new',
-        f'snapshotDirectory {output_dir}',
+        f'snapshotDirectory {os.path.abspath(output_dir)}',
         f'genome {genome}'
     ]
     for bam in paths:
-        batch_content.append(f'load {bam}')
+        batch_content.append(f'load {os.path.abspath(bam)}')
     
     png_paths, region_content = _get_paths_and_regions(regions, 
         output_dir=output_dir, overlap_display=overlap_display, 
