@@ -1,4 +1,5 @@
 matplotlib
 Pillow
+PyYAML
 # Optional dependency for PDF output
 # cairosvg
