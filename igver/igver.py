@@ -130,7 +130,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
     # Create batch script and expected PNG paths
     tmpdir = os.getenv("TMPDIR", output_dir)  # Default to /tmp if TMPDIR is not set
     if output_dir == '/tmp':
-        output_dir = os.environ['TMPDIR']
+        output_dir = os.environ.get('TMPDIR', '/tmp')
     if debug:
         print(f"[LOG:{time.ctime()}] TMPDIR is set to: {tmpdir}")
     # Pass output_format to create_batch_script
@@ -181,22 +181,15 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
     if not output_paths:
         raise RuntimeError("[ERROR] No screenshots generated.")
 
-    # Handle different output formats
-    if not load_figures:
-        # Skip loading into matplotlib — just return file paths.
-        # This avoids creating unclosed figures that leak memory (important for large region sets).
-        return output_paths
-    elif output_format == 'pdf':
-        # For PDF, we need to convert from SVG
-        figures = _convert_svg_to_pdf(output_paths, remove_png, dpi, debug)
-    elif output_format == 'svg':
-        # For SVG, return the paths as figures are not needed
-        figures = output_paths  # Return paths instead of matplotlib figures
-    else:
-        # Load PNG screenshots into Matplotlib figures
-        figures = _get_figures(output_paths, remove_png, dpi, debug)
+    # PDF is rendered by IGV as SVG and converted here, regardless of load_figures
+    if output_format == 'pdf':
+        output_paths = _convert_svg_to_pdf(output_paths, remove_png, dpi, debug)
 
-    return figures
+    # Only PNG can be loaded into matplotlib; skipping it avoids unclosed-figure memory leaks
+    # on large region sets (the CLI always passes load_figures=False).
+    if not load_figures or output_format != 'png':
+        return output_paths
+    return _get_figures(output_paths, remove_png, dpi, debug)
 
 
 def _parse_bed_file(bed_file, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
