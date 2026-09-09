@@ -162,6 +162,10 @@ igver \
 | `-d`, `--overlap-display` | Read display mode: `expand`, `collapse`, or `squish` | `squish` |
 | `-c`, `--igv-config` | Path to file with additional IGV batch commands injected before each snapshot | *none* |
 | `-f`, `--format` | Output format: `png`, `svg`, or `pdf` (pdf requires `cairosvg`) | `png` |
+| `--color-by` | IGV `colorBy` value injected before each snapshot, e.g. `BASE_MODIFICATION` or `'TAG HP'`; unknown values are rejected | *none* |
+| `--methylation`, `--meth` | Shortcut for `--color-by BASE_MODIFICATION` | `false` |
+| `-j`, `--jobs` | Number of IGV processes run in parallel; regions are split into this many chunks (each process is its own JVM) | `1` |
+| `--stall-timeout` | Kill IGV if no new snapshot appears for this many seconds, then retry the missing regions once; guards against IGV blocking on an error dialog in headless mode. `0` disables | `600` |
 | `--singularity-image` | Singularity/Docker image path | `docker://sahuno/igver:latest` |
 | `--singularity-args` | Additional Singularity arguments (e.g. bind mounts) | `-B /home` |
 | `--no-singularity` | Run IGV directly without Singularity wrapper (**required** when running inside a container) | `false` |

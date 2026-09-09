@@ -1,5 +1,8 @@
 import os
+import signal
 import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 import time
 
@@ -93,7 +96,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
                      overwrite=True, remove_png=True, dpi=300,
                      singularity_image='docker://sahuno/igver:latest', singularity_args='-B /home',
                      debug=False, output_format='png', use_singularity=None,
-                     load_figures=True, **kwargs):
+                     load_figures=True, jobs=1, stall_timeout=600, **kwargs):
     """
     Generates IGV screenshots and optionally loads them into Matplotlib figures.
 
@@ -112,6 +115,10 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
         output_format (str, optional): Output image format - 'png', 'svg', or 'pdf' (default: 'png').
         load_figures (bool, optional): Whether to load screenshots into Matplotlib figures (default: True).
             Set to False when only file output is needed (e.g. CLI usage) to avoid memory overhead.
+        jobs (int, optional): Number of IGV processes to run in parallel. Regions are split into
+            `jobs` contiguous chunks, each rendered by its own IGV/JVM (default: 1).
+        stall_timeout (int, optional): Kill an IGV process if it produces no new snapshot for this
+            many seconds, then retry the missing regions once; 0 disables (default: 600).
         **kwargs (optional): *kwargs* such as tag, max_panel_height, overlap_display, igv_config for create_batch_script
 
     Returns:
@@ -142,9 +149,33 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
 
     # Run IGV to generate the screenshots
     singularity_image = os.environ.get('IGVER_IMAGE', singularity_image)
-    run_igv(batch_script, output_paths, igv_dir, overwrite, 
-        singularity_image=singularity_image, singularity_args=singularity_args, 
-        debug=debug, use_singularity=use_singularity)
+
+    def _run(batch, paths):
+        run_igv(batch, paths, igv_dir, overwrite,
+            singularity_image=singularity_image, singularity_args=singularity_args,
+            debug=debug, use_singularity=use_singularity, stall_timeout=stall_timeout)
+
+    if jobs > 1:
+        # Split the batch into contiguous region chunks and render each in its own IGV process
+        with open(batch_script) as f:
+            header, blocks = _split_batch(f.read())
+        os.remove(batch_script)
+        n_chunks = max(1, min(jobs, len(blocks)))
+        size = -(-len(blocks) // n_chunks)  # ceil
+        chunks = [blocks[i:i + size] for i in range(0, len(blocks), size)]
+        if debug:
+            print(f"[LOG:{time.ctime()}] Rendering {len(blocks)} regions in {len(chunks)} parallel IGV processes")
+
+        def _run_chunk(chunk):
+            chunk_batch = os.path.join(output_dir, f'{uuid.uuid4()}.batch')
+            _write_batch(chunk_batch, header, chunk)
+            names = {_snapshot_name(b) for b in chunk}
+            _run(chunk_batch, [p for p in output_paths if os.path.basename(p) in names])
+
+        with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+            list(pool.map(_run_chunk, chunks))  # list() re-raises worker exceptions
+    else:
+        _run(batch_script, output_paths)
 
     # Check if screenshots were generated
     if not output_paths:
@@ -231,6 +262,8 @@ def _parse_region_file(region_file, output_dir, overlap_display='squish', max_pa
     png_paths = []
     region_content = []
     for line in open(region_file):
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
         out_tag = ''
         sv_tag = ''
         field = line.strip().split() # split by either ' ' or '\t'
@@ -305,8 +338,8 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
         igv_config (str, optional): Path to file containing IGV batch commands to inject before
             each snapshot (default: None). Must use IGV batch command syntax (e.g. 'colorBy BASE_MODIFICATION'),
             not KEY=VALUE properties format.
-        color_by (str, optional): IGV colorBy value to inject before each snapshot (e.g. 'BASE_MODIFICATION').
-            Applied before igv_config commands. Use the CLI --color-by flag or --methylation preset.
+        color_by (str, optional): IGV colorBy value injected before each snapshot (e.g. 'BASE_MODIFICATION',
+            'TAG HP'). Emitted before igv_config commands (default: None).
 
     Returns:
         str: The path to the generated IGV batch script.
@@ -392,9 +425,100 @@ def _remove_previous_output(png_paths, debug=False):
                 print(f"[LOG:{time.ctime()}] Removed existing {png_path}")
 
 
+def _split_batch(batch_text):
+    """
+    Split IGV batch text into its header and per-region blocks.
+
+    Parameters:
+        batch_text (str): Contents of a batch file written by create_batch_script.
+
+    Returns:
+        tuple: (header_lines, blocks) where header_lines is the list of lines before the first
+            `goto` (new/snapshotDirectory/genome/load ...) and blocks is a list of line-lists, one
+            per region, each starting at `goto` and ending at `snapshot`. The trailing `exit` is dropped.
+
+    Example:
+        >>> header, blocks = _split_batch("new\ngenome hg19\ngoto chr1:1-2\nsnapshot a.png\nexit")
+        >>> header, blocks
+        (['new', 'genome hg19'], [['goto chr1:1-2', 'snapshot a.png']])
+    """
+    lines = [line for line in batch_text.splitlines() if line.strip() != 'exit']
+    first = next((i for i, line in enumerate(lines) if line.startswith('goto ')), len(lines))
+    header, blocks = lines[:first], []
+    for line in lines[first:]:
+        if line.startswith('goto '):
+            blocks.append([])
+        blocks[-1].append(line)
+    return header, blocks
+
+
+def _write_batch(path, header, blocks):
+    """Write header + region blocks + exit as an IGV batch file at `path`."""
+    with open(path, 'w') as f:
+        f.write('\n'.join(header + [line for block in blocks for line in block] + ['exit']))
+
+
+def _snapshot_name(block):
+    """Return the snapshot filename a region block writes (its final `snapshot <name>` line)."""
+    return block[-1][len('snapshot '):].strip()
+
+
+def _run_until_stalled(cmd, png_paths, stall_timeout, debug=False):
+    """
+    Run an IGV command, killing its whole process group if it stops producing snapshots.
+
+    IGV in batch mode turns any uncaught error (unreachable annotation server, unloadable
+    track, ...) into a modal dialog on the virtual display and then waits forever for a click.
+    Zero progress is the only external symptom, so progress is what we watch.
+
+    Parameters:
+        cmd (str): Shell command that launches IGV.
+        png_paths (list of str): Expected snapshot paths; progress = number that exist.
+        stall_timeout (int): Seconds without a new snapshot before IGV is killed. 0 disables.
+        debug (bool, optional): Print IGV stdout/stderr (default: False).
+
+    Returns:
+        bool: True if IGV exited on its own, False if it was killed for stalling.
+
+    Example:
+        >>> _run_until_stalled('sleep 60', ['/nonexistent.png'], stall_timeout=1)
+        False
+    """
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True)
+    n_done = sum(os.path.exists(p) for p in png_paths)
+    last_progress = time.time()
+    finished = True
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        n_now = sum(os.path.exists(p) for p in png_paths)
+        if n_now > n_done:
+            n_done, last_progress = n_now, time.time()
+        elif stall_timeout and time.time() - last_progress > stall_timeout:
+            os.killpg(proc.pid, signal.SIGTERM)  # let xvfb-run remove its display lock
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                stdout, stderr = proc.communicate()
+            finished = False
+            print(f"[WARNING:{time.ctime()}] IGV produced no new snapshot for {stall_timeout}s "
+                  f"({n_done}/{len(png_paths)} done); killed. This usually means IGV hit an error "
+                  f"and is blocked on a dialog. Check ~/igv/igv0.log.", file=sys.stderr)
+            break
+    if debug:
+        print(f"[STDOUT:{time.ctime()}]\n{stdout.decode()}")
+        print(f"[STDERR:{time.ctime()}]\n{stderr.decode()}")
+    return finished
+
+
 def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.5", overwrite=False, 
             singularity_image='docker://sahuno/igver:latest', singularity_args='-B /data1 -B /home',
-            debug=False, use_singularity=None):
+            debug=False, use_singularity=None, stall_timeout=600):
     """
     Runs IGV using the generated batch script and ensures all PNG screenshots are created.
 
@@ -404,6 +528,8 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.5", overwrite=False,
         igv_dir (str, optional): Directory containing IGV installation (default: "/opt/IGV_2.19.5").
         overwrite (bool, optional): Whether to overwrite existing PNG files (default: False).
         debug (bool, optional): Whether to show logs for debugging (default: False).
+        stall_timeout (int, optional): Kill IGV if no new snapshot appears for this many seconds;
+            0 disables (default: 600). Guards against IGV blocking on an error dialog.
 
     Returns:
         list of str: Paths to the generated PNG files.
@@ -435,21 +561,24 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.5", overwrite=False,
     if overwrite:
         _remove_previous_output(png_paths, debug)
 
-    # Run IGV
-    n_iter = 0
+    # Run IGV; on retry, rewrite the batch to cover only the regions still missing
     max_iter = 2
-    while not all(os.path.exists(png) for png in png_paths) and n_iter < max_iter:
+    for n_iter in range(max_iter):
+        missing = [png for png in png_paths if not os.path.exists(png)]
+        if not missing:
+            break
+        if n_iter > 0:
+            with open(batch_script) as f:
+                header, blocks = _split_batch(f.read())
+            want = {os.path.basename(png) for png in missing}
+            _write_batch(batch_script, header, [b for b in blocks if _snapshot_name(b) in want])
         if debug:
-            print(f"[LOG:{time.ctime()}] Iteration #{n_iter + 1}: Ensuring PNG files exist")
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Print STDOUT and STDERR if debug=True
-        if debug:
-            print(f"[STDOUT:{time.ctime()}]\n{result.stdout.decode()}")
-            print(f"[STDERR:{time.ctime()}]\n{result.stderr.decode()}")
-        n_iter += 1
+            print(f"[LOG:{time.ctime()}] Iteration #{n_iter + 1}: rendering {len(missing)} missing snapshot(s)")
+        _run_until_stalled(cmd, png_paths, stall_timeout, debug)
 
     if not all(os.path.exists(png) for png in png_paths):
-        raise RuntimeError(f"[ERROR:{time.ctime()}] Failed to generate all PNG files after {max_iter} iterations.")
+        raise RuntimeError(f"[ERROR:{time.ctime()}] Failed to generate all PNG files after {max_iter} iterations. "
+                           f"Batch for the missing regions kept at {batch_script}; see ~/igv/igv0.log for IGV errors.")
 
     # Cleanup batch script
     os.remove(batch_script)

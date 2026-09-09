@@ -15,36 +15,15 @@ except ImportError:
     import importlib_resources as resources  # Backport for Python 3.7-3.8
 
 
-# Known valid IGV colorBy values. Hard-fail on anything outside this set.
+# IGV batch `colorBy` values: AlignmentTrack.ColorOption enum in IGV 2.19.x.
+# IGV silently ignores an unknown value, so we hard-fail here instead.
 VALID_COLOR_BY_VALUES = {
-    'BASE_MODIFICATION',
-    'BASE_MODIFICATION_2COLOR',
-    'STRAND',
-    'READ_STRAND',
-    'FIRST_OF_PAIR_STRAND',
-    'PAIR_ORIENTATION',
-    'INSERT_SIZE',
-    'SAMPLE',
-    'TAG',
-    'BISULFITE',
-    'NOMESEQ',
-    'NONE',
-}
-
-# Preset applied when --methylation is set (overridden by any explicit flag)
-_METHYL_PRESET = {
-    'dpi': 600,
-    'max_panel_height': 1000,
-    'overlap_display': 'expand',
-    'color_by': 'BASE_MODIFICATION',
-}
-
-# Normal defaults (used when --methylation is not set)
-_DEFAULTS = {
-    'dpi': 300,
-    'max_panel_height': 200,
-    'overlap_display': 'squish',
-    'color_by': None,
+    'INSERT_SIZE', 'READ_STRAND', 'FIRST_OF_PAIR_STRAND', 'PAIR_ORIENTATION',
+    'READ_ORDER', 'SAMPLE', 'READ_GROUP', 'LIBRARY', 'MOVIE', 'ZMW',
+    'BISULFITE', 'NOMESEQ', 'TAG', 'NONE', 'UNEXPECTED_PAIR', 'MAPPED_SIZE',
+    'LINK_STRAND', 'YC_TAG', 'BASE_MODIFICATION', 'BASE_MODIFICATION_2COLOR',
+    'SMRT_SUBREAD_IPD', 'SMRT_SUBREAD_PW', 'SMRT_CCS_FWD_IPD', 'SMRT_CCS_FWD_PW',
+    'SMRT_CCS_REV_IPD', 'SMRT_CCS_REV_PW',
 }
 
 
@@ -66,8 +45,7 @@ def parse_args():
         "-g", "--genome", default="hg19", help="Genome reference (default: hg19)"
     )
     parser.add_argument(
-        "--dpi", type=int, default=None,
-        help="DPI for output images (default: 300; 600 with --methylation)"
+        "--dpi", type=int, default=300, help="DPI for output images (default: 300)"
     )
     parser.add_argument(
         "--igv-dir",
@@ -77,37 +55,43 @@ def parse_args():
     parser.add_argument(
         "-p", "--max-panel-height",
         type=int,
-        default=None,
-        help="Maximum panel height for IGV (default: 200; 1000 with --methylation)"
+        default=200,
+        help="Maximum panel height for IGV (default: 200)."
     )
     parser.add_argument(
         "-d", "--overlap-display",
         choices=["expand", "collapse", "squish"],
-        default=None,
-        help="Display mode for overlapping reads (default: squish; expand with --methylation)"
+        default="squish",
+        help="Display mode for overlapping reads (default: squish)."
     )
     parser.add_argument(
         "-c", "--igv-config",
         help="Path to file containing IGV batch commands to inject before each snapshot (e.g. 'colorBy BASE_MODIFICATION'). Note: use batch command syntax, not KEY=VALUE properties format."
     )
     parser.add_argument(
-        "--methylation", "--meth",
-        action="store_true", dest="methylation",
-        help=(
-            "Enable methylation visualization preset: colorBy BASE_MODIFICATION, "
-            "expand display, panel height 1000, DPI 600. "
-            "Any explicit flag overrides the preset (e.g. --methylation --dpi 300)."
-        )
-    )
-    parser.add_argument(
         "--color-by",
         dest="color_by",
         metavar="VALUE",
         help=(
-            "Set IGV colorBy value (e.g. BASE_MODIFICATION, BASE_MODIFICATION_2COLOR, STRAND). "
-            f"Valid values: {', '.join(sorted(VALID_COLOR_BY_VALUES))}. "
-            "When used with --methylation, this overrides the preset colorBy."
+            "Inject 'colorBy VALUE' before each snapshot, e.g. BASE_MODIFICATION or 'TAG HP' (quote two-word values). "
+            f"Valid values: {', '.join(sorted(VALID_COLOR_BY_VALUES))}."
         )
+    )
+    parser.add_argument(
+        "--methylation", "--meth",
+        action="store_const", const="BASE_MODIFICATION", dest="color_by",
+        help="Shortcut for --color-by BASE_MODIFICATION (ONT/PacBio methylation coloring)."
+    )
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=1,
+        help="Number of IGV processes to run in parallel; regions are split into this many chunks. "
+             "Each process starts its own JVM, so budget memory accordingly (default: 1)."
+    )
+    parser.add_argument(
+        "--stall-timeout", type=int, default=600, metavar="SECONDS",
+        help="Kill IGV if it produces no new snapshot for this many seconds, then retry the missing "
+             "regions once. Guards against IGV blocking on an error dialog in headless mode. "
+             "0 disables (default: 600)."
     )
     parser.add_argument(
         "--singularity-image",
@@ -183,32 +167,13 @@ def main():
     os.environ["DISPLAY"] = ""
     args = parse_args()
 
-    # Validate --color-by before anything else
-    if args.color_by and args.color_by not in VALID_COLOR_BY_VALUES:
+    if args.color_by and args.color_by.split()[0].upper() not in VALID_COLOR_BY_VALUES:
         print(
             f"[ERROR] Unknown --color-by value: '{args.color_by}'\n"
             f"  Valid values: {', '.join(sorted(VALID_COLOR_BY_VALUES))}",
             file=sys.stderr
         )
         sys.exit(1)
-
-    # Apply methylation preset, then let explicit flags override
-    preset = _METHYL_PRESET if args.methylation else _DEFAULTS
-    if args.dpi is None:
-        args.dpi = preset['dpi']
-    if args.max_panel_height is None:
-        args.max_panel_height = preset['max_panel_height']
-    if args.overlap_display is None:
-        args.overlap_display = preset['overlap_display']
-    # --color-by always wins; fall back to preset colorBy only for --methylation
-    if args.color_by is None:
-        args.color_by = preset['color_by']
-
-    if args.methylation:
-        print(
-            f"[INFO] Methylation preset active: colorBy={args.color_by}, "
-            f"display={args.overlap_display}, panel_height={args.max_panel_height}, dpi={args.dpi}"
-        )
 
     # Parse input paths - handle both .txt file and direct paths
     input_paths = []
@@ -251,17 +216,11 @@ def main():
             "use_singularity": not args.no_singularity,
             "singularity_image": args.singularity_image,
             "singularity_args": args.singularity_args,
+            "igv_config": args.igv_config,
+            "color_by": args.color_by,
+            "jobs": args.jobs,
+            "stall_timeout": args.stall_timeout,
         }
-
-        # Conditionally add `igv_config` if it's provided
-        if args.igv_config:
-            kwargs["igv_config"] = args.igv_config
-
-        # Conditionally add `color_by` if set (either via --color-by or --methylation preset)
-        if args.color_by:
-            kwargs["color_by"] = args.color_by
-
-        # Call the function with unpacked arguments
         _ = load_screenshots(**kwargs)
 
         print(f"[SUCCESS] Screenshots saved in: {args.output}")

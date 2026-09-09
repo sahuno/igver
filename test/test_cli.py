@@ -10,7 +10,7 @@ OUTPUT_DIR = "test/output"
 TMP_DIR = os.environ.get('TMPDIR', '/tmp')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 REGION = "8:32534767-32536767 19:11137898-11139898"
-FILENAME = "8-32534767-32536767.19-11137898-11139898.translocation.tumor.png"
+FILENAME = "8-32534767-32536767.19-11137898-11139898.translocation.png"
 EXPECTED_IMAGE = os.path.join(OUTPUT_DIR, FILENAME.replace('.translocation', ''))
 BASELINE_IMAGE = os.path.join("test/snapshots", FILENAME)  # Pre-generated baseline image
 SINGULARITY_IMAGE = "docker://sahuno/igver:latest"
@@ -30,12 +30,14 @@ def test_png_generation():
 	'singularity', 'run', 
         '-B', SINGULARITY_BIND_DIR,
         '-B', TMP_DIR,
+        '--pwd', SINGULARITY_BIND_DIR,
         SINGULARITY_IMAGE,
-        'python', 'igver.py',
-        '--bam', TEST_BAM1, TEST_BAM2,
+        'python', '-m', 'igver.cli',
+        '-i', TEST_BAM1, TEST_BAM2,
         '-r', REGION,
         '-o', OUTPUT_DIR,
-        '-g', 'hg19'
+        '-g', 'hg19',
+        '--no-singularity'
     ]
     print(" ".join(command))
 
