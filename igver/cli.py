@@ -152,15 +152,43 @@ def _parse_input_file(input_file):
 
 
 def _load_genome_mappings():
-    """Loads genome mappings from genome.yaml"""
+    """
+    Load the genome alias -> IGV genome id mapping from igver/data/genome_map.yaml.
+
+    Two YAML layouts are accepted: a flat mapping at the top level, or the same
+    mapping nested under an `aliases:` key. Only str -> str pairs are kept, so a
+    stray comment-like or structured entry cannot poison the lookup.
+
+    Returns:
+        dict: {alias: igv_genome_id}. Empty dict if the file cannot be read,
+              in which case -g is passed through to IGV unchanged.
+
+    Example:
+        >>> _load_genome_mappings()['GRCh38']
+        'hg38'
+    """
     try:
         yaml_path = resources.files("igver.data").joinpath("genome_map.yaml")
         with yaml_path.open('r') as f:
             genome_data = yaml.safe_load(f)
-        return genome_data.get("aliases", {})
     except Exception as e:
-        print(f"[ERROR] Failed to load genome.yaml: {e}")
+        print(f"[WARNING] Could not read genome_map.yaml ({e}); "
+              f"--genome will be passed to IGV unchanged.", file=sys.stderr)
         return {}
+
+    if not isinstance(genome_data, dict):
+        print("[WARNING] genome_map.yaml is not a mapping; "
+              "--genome will be passed to IGV unchanged.", file=sys.stderr)
+        return {}
+
+    # Historically the aliases lived at the top level; support a nested
+    # `aliases:` block too so either layout resolves.
+    aliases = genome_data.get("aliases", genome_data)
+    if not isinstance(aliases, dict):
+        return {}
+
+    return {k: v for k, v in aliases.items()
+            if isinstance(k, str) and isinstance(v, str)}
 
 
 def main():
