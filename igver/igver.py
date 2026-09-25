@@ -92,7 +92,7 @@ def _convert_svg_to_pdf(svg_paths, remove_svg, dpi, debug):
     return pdf_paths
 
 
-def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="/opt/IGV_2.19.5",
+def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="/opt/IGV_2.19.8",
                      overwrite=True, remove_png=True, dpi=300,
                      singularity_image='docker://sahuno/igver:latest', singularity_args='-B /home',
                      debug=False, output_format='png', use_singularity=None,
@@ -105,7 +105,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
         regions (list of str): List of genomic regions in 'chr:start-end' format.
         output_dir (str, optional): Directory for output screenshots (default: "/tmp").
         genome (str, optional): Genome version (default: "hg19").
-        igv_dir (str, optional): Directory containing IGV installation (default: "/opt/IGV_2.19.5").
+        igv_dir (str, optional): Directory containing IGV installation (default: "/opt/IGV_2.19.8").
         overwrite (bool, optional): Whether to overwrite existing PNG files (default: True).
         remove_png (bool, optional): Whether to remove created PNG files (default: True).
         dpi (int, optional): DPI of the figure (default: 300).
@@ -511,7 +511,7 @@ def _run_until_stalled(cmd, png_paths, stall_timeout, debug=False):
     return finished
 
 
-def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.5", overwrite=False, 
+def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False, 
             singularity_image='docker://sahuno/igver:latest', singularity_args='-B /data1 -B /home',
             debug=False, use_singularity=None, stall_timeout=600):
     """
@@ -520,7 +520,7 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.5", overwrite=False,
     Parameters:
         batch_script (str): Path to the IGV batch script.
         png_paths (list of str): Expected paths of the output PNG screenshot.
-        igv_dir (str, optional): Directory containing IGV installation (default: "/opt/IGV_2.19.5").
+        igv_dir (str, optional): Directory containing IGV installation (default: "/opt/IGV_2.19.8").
         overwrite (bool, optional): Whether to overwrite existing PNG files (default: False).
         debug (bool, optional): Whether to show logs for debugging (default: False).
         stall_timeout (int, optional): Kill IGV if no new snapshot appears for this many seconds;

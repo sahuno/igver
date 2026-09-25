@@ -53,8 +53,8 @@ def parse_args():
     )
     parser.add_argument(
         "--igv-dir",
-        default="/opt/IGV_2.19.5",
-        help="Path to IGV installation (default: /opt/IGV_2.19.5)"
+        default="/opt/IGV_2.19.8",
+        help="Path to IGV installation (default: /opt/IGV_2.19.8)"
     )
     parser.add_argument(
         "-p", "--max-panel-height",

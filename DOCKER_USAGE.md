@@ -177,7 +177,7 @@ done
 ## Performance Tips
 
 1. **Pre-pull the image**: `docker pull sahuno/igver:latest`
-2. **Use specific version tags**: `sahuno/igver:2.19.5` for reproducibility
+2. **Use specific version tags**: `sahuno/igver:1.2.1` (IGV 2.19.8) for reproducibility
 3. **Mount only necessary directories** to reduce overhead
 4. **Process multiple regions in one command** rather than multiple runs
 

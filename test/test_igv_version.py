@@ -12,7 +12,7 @@ from igver import cli
 
 
 class TestIGVVersion:
-    """Test that IGV version has been updated to 2.19.5"""
+    """Test that IGV version has been updated to 2.19.8"""
     
     def test_default_igv_dir_in_load_screenshots(self):
         """Test default IGV directory in load_screenshots function"""
@@ -21,7 +21,7 @@ class TestIGVVersion:
         sig = inspect.signature(igver.load_screenshots)
         igv_dir_default = sig.parameters['igv_dir'].default
         
-        assert igv_dir_default == "/opt/IGV_2.19.5"
+        assert igv_dir_default == "/opt/IGV_2.19.8"
     
     def test_default_igv_dir_in_run_igv(self):
         """Test default IGV directory in run_igv function"""
@@ -29,7 +29,7 @@ class TestIGVVersion:
         sig = inspect.signature(igver.run_igv)
         igv_dir_default = sig.parameters['igv_dir'].default
         
-        assert igv_dir_default == "/opt/IGV_2.19.5"
+        assert igv_dir_default == "/opt/IGV_2.19.8"
     
     def test_cli_default_igv_dir(self):
         """Test default IGV directory in CLI arguments"""
@@ -45,10 +45,10 @@ class TestIGVVersion:
             cli_content = f.read()
         
         # Check for the default IGV directory in the argparse definition
-        assert 'default="/opt/IGV_2.19.5"' in cli_content
+        assert 'default="/opt/IGV_2.19.8"' in cli_content
     
     def test_dockerfile_igv_version(self):
-        """Test that Dockerfile contains IGV 2.19.5"""
+        """Test that Dockerfile contains IGV 2.19.8"""
         dockerfile_path = os.path.join(
             os.path.dirname(__file__), 
             "..", 
@@ -60,9 +60,9 @@ class TestIGVVersion:
             with open(dockerfile_path, 'r') as f:
                 dockerfile_content = f.read()
             
-            # Check for IGV 2.19.5 references
-            assert "IGV_2.19.5.zip" in dockerfile_content
-            assert "/opt/IGV_2.19.5" in dockerfile_content
+            # Check for IGV 2.19.8 references
+            assert "IGV_2.19.8.zip" in dockerfile_content
+            assert "/opt/IGV_2.19.8" in dockerfile_content
             assert "2.17.4" not in dockerfile_content  # Old version should be gone
     
     def test_no_old_version_references(self):

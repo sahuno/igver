@@ -6,6 +6,9 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 > The methylation, parallel-rendering and PDF features documented below live in this fork.
 > PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
+**New in 1.2.1 (this fork):**
+- IGV 2.19.8 in the container (from 2.19.5); `/opt/IGV_2.19.5` is kept as a symlink so igver ≤ 1.2.0 still works against `:latest`
+
 **New in 1.2.0 (this fork):**
 - `--methylation` / `--meth` — one-flag base-modification coloring for ONT/PacBio data
 - `--color-by` — set any IGV `colorBy` value, validated against IGV's enum (IGV silently ignores typos, so igver hard-fails instead)
@@ -22,7 +25,8 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 
 **Container versions:**
 - `sahuno/igver:latest` — most recent (recommended)
-- `sahuno/igver:2.19.5` — pinned to IGV 2.19.5
+- `sahuno/igver:1.2.1` — igver 1.2.1 with IGV 2.19.8
+- `sahuno/igver:1.2.0` — igver 1.2.0 with IGV 2.19.5
 
 ## Table of Contents
 - [Features](#features)
@@ -166,7 +170,7 @@ igver -i sample.bam -r "chr1:1000-2000" "chr2:3000-4000" -o ./screenshots
 | `-o`, `--output` | Output directory for screenshots. When left at the default, `$TMPDIR` is used if set, else `/tmp` | `$TMPDIR` or `/tmp` |
 | `-g`, `--genome` | IGV genome id (`hg38`), a supported alias (`GRCh38`), or a path to a reference FASTA/`.genome` | `hg19` |
 | `--dpi` | DPI resolution for output images | `300` |
-| `--igv-dir` | Path to the IGV installation inside the container | `/opt/IGV_2.19.5` |
+| `--igv-dir` | Path to the IGV installation inside the container | `/opt/IGV_2.19.8` |
 | `-p`, `--max-panel-height` | Maximum pixel height per track panel | `200` |
 | `-d`, `--overlap-display` | Read display mode: `expand`, `collapse`, or `squish` | `squish` |
 | `-c`, `--igv-config` | File of additional IGV **batch commands** injected before each snapshot (not `KEY=VALUE` properties) | *none* |
@@ -241,7 +245,7 @@ igver.load_screenshots(
     regions,                   # list of regions, or a path to a .bed / .txt region file
     output_dir='/tmp',         # '/tmp' resolves to $TMPDIR when that is set
     genome='hg19',             # IGV genome id, alias, or reference FASTA path
-    igv_dir='/opt/IGV_2.19.5',
+    igv_dir='/opt/IGV_2.19.8',
     overwrite=True,            # remove pre-existing outputs before rendering
     remove_png=True,           # delete image files after loading them into figures
     dpi=300,
