@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: User to pick which of the 12 audited bugs to fix (see 2026-09-25 17:20 log entry)
+next_action: Execute docs/plans/20260925_audit_bugfix_plan.md (Phase A first)
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -17,6 +17,7 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Exact next steps
 
+0. **Execute `docs/plans/20260925_audit_bugfix_plan.md`** (fixes all 12 audited bugs, release 1.3.0). Read it fully first; follow its Phase A (tests before fixes) → B → C order and its ground rules.
 1. When the RetroEM `03_igv_top_loci.sbatch` no longer names `igver_1.2.1_igv2.19.8.sif`, move that SIF to `images/archived/`
 2. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
 
