@@ -1,0 +1,2 @@
+# igver --igv-prefs: show soft-clipped bases
+SAM.SHOW_SOFT_CLIPPED=true

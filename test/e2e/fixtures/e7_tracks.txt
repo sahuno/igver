@@ -1,0 +1,2 @@
+# relative to test/e2e/fixtures (the harness cwd)
+../../test_tumor.bam

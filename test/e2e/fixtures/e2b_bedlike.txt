@@ -1,0 +1,2 @@
+# BED-like line in a .txt region file
+8 32534766 32536767 bedlike

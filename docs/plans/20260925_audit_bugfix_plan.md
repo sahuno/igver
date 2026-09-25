@@ -456,3 +456,25 @@ Phase C
 
 ## Design changes
 (append here: date, item, what changed, why)
+- 2026-09-25 · B1 · `-g <genome>` on the IGV command line does **not** stop IGV loading its default genome
+  first (probe: two `Loading genome:` lines). `DEFAULT_GENOME_KEY=<genome>` in the run's prefs does (one
+  line). igver writes `DEFAULT_GENOME_KEY` (taken from the batch `genome` line) and does not pass `-g`.
+- 2026-09-25 · B1 · IGV **copies the user's `~/igv/prefs.properties`** into a fresh `--igvDirectory` that has
+  none, and keeps a pre-written one. So the template must always be written before IGV starts (it is).
+- 2026-09-25 · B1 · Each IGV *launch* (not each `run_igv` call) gets its own run dir: a retry deletes the
+  failed attempt's dir after printing its log excerpt, so the kept dir always holds the last attempt's log.
+- 2026-09-25 · B1/E1 · The `IGV Directory:` and `Loading genome:` lines are observed in the `--debug` output
+  (IGV's console output, which `--debug` already prints), not in the deleted run dir. `--debug` now also
+  prints the batch script (needed by R3 "batch inspection").
+- 2026-09-25 · B11 · With `-j`, every failed chunk is reported (1.2.3 re-raised only the first), so each
+  chunk's message names its own kept run dir.
+- 2026-09-25 · A2 · `cases.tsv` has one extra column, `checks` (grep/nogrep/count/width/tmp_clean/
+  home_untouched/rundirs/same_as/differs_from/overlay/setup/visual), documented in its header. The bash
+  entry `run_e2e.sh` logs and calls `e2e_runner.py`, which does the Pillow/pixel checks. Outputs go to
+  `test/e2e/out/<mode>/<case_id>/`. A kept `<uuid>.batch` is reported but excluded from the exact file list.
+- 2026-09-25 · A2 · Forced-stall trigger (E3c, E11f): a corrupt BAM, an unknown file type and a stale index
+  all render without a dialog; a 404 URL track (`https://igv.org/does/not/exist/x.bam`) and a dead-URL genome
+  JSON both block IGV. The 404 URL is used because it also writes SEVERE lines to the log.
+- 2026-09-25 · A2 · E7 and E8 passed on 1.2.3 by file list alone (E8's PNG was silently rendered against the
+  personal default genome, every read a mismatch). Both now grep IGV's `Loading resource:`/`Loading genome:`
+  lines from `--debug`.

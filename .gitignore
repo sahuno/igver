@@ -190,3 +190,7 @@ develop.sh
 # MCP server logs
 gutils-mcp.log
 gutils-mcp-error.log
+
+# igver e2e harness outputs
+test/e2e/out/
+test/e2e/logs/
