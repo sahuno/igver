@@ -500,3 +500,7 @@ Phase C
   the whole-genome view (exit 0, nothing in the log or on stdout). There is no IGV signal to turn into a
   "could not find locus" message, so igver warns for every non-locus `-r` string instead, and the gap is an
   open unknown (validating contigs against the genome index would need the genome's .fai).
+- 2026-09-25 · B8 · A `-g` value ending in a genome-file extension that does not exist exits 1 ("genome file
+  not found") instead of reaching IGV. The binds also cover the realpath directories of `<f>.fai`/`<f>.gzi`,
+  since an index can be a symlink into another directory. `DEFAULT_GENOME_KEY=<absolute FASTA path>` works
+  (E8: one `Loading genome:` line).

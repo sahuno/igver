@@ -8,7 +8,7 @@ import yaml
 # Add package root to sys.path when running as a script
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from igver import __version__, load_screenshots
-from igver.igver import find_missing_indexes, parse_igv_prefs, _is_url
+from igver.igver import find_missing_indexes, parse_igv_prefs, resolve_genome_file, _is_url
 
 try:
     from importlib import resources  # Python 3.9+
@@ -278,6 +278,11 @@ def main():
 
     genome_map = _load_genome_mappings()
     genome = genome_map.get(args.genome, args.genome) # convert e.g. GRCh38 -> hg38
+    try:
+        genome = resolve_genome_file(genome)  # local FASTA/.genome/.json -> absolute, indexed
+    except FileNotFoundError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(1)
 
     try:
         kwargs = {

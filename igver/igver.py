@@ -153,6 +153,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
         if _is_url(path):
             continue  # remote track: nothing to bind
         bind_dirs += [os.path.dirname(os.path.abspath(path)), os.path.dirname(os.path.realpath(path))]
+    bind_dirs += _genome_bind_dirs(genome)
     bind_dirs += [os.path.realpath(output_dir), tmpdir]
     for bind_dir in dict.fromkeys(bind_dirs):  # de-duplicated, order kept
         singularity_args += f' -B {shlex.quote(bind_dir)}'
@@ -598,6 +599,59 @@ def _batch_arg(value):
 def _is_url(path):
     """True for a remote track such as https://..., s3://... or gs://... ."""
     return re.match(r'^[A-Za-z][A-Za-z0-9+.-]*://', path) is not None
+
+
+FASTA_EXTENSIONS = ('.fa', '.fasta', '.fna')
+GENOME_FILE_EXTENSIONS = FASTA_EXTENSIONS + ('.genome', '.json')
+
+
+def resolve_genome_file(genome):
+    """
+    Resolve -g when it names a local genome file; pass a genome id (hg38, mm10, ...) through.
+
+    A value ending in .fa/.fasta/.fna/.genome/.json (optionally .gz) is a file: it must exist and
+    is made absolute (IGV resolves a relative path against the batch file's directory). A FASTA
+    also needs <f>.fai, and a gzipped FASTA <f>.gzi (bgzip).
+
+    Parameters:
+        genome (str): The -g value after alias mapping.
+
+    Returns:
+        str: The absolute path for a genome file, else `genome` unchanged.
+
+    Raises:
+        FileNotFoundError: The genome file or a required FASTA index is missing.
+
+    Example:
+        >>> resolve_genome_file('ref/grch37.fa')  # with ref/grch37.fa.fai present
+        '/work/ref/grch37.fa'
+    """
+    low = genome.lower()
+    base = low[:-3] if low.endswith('.gz') else low
+    if not base.endswith(GENOME_FILE_EXTENSIONS):
+        return genome
+    if not os.path.isfile(genome):
+        raise FileNotFoundError(f"genome file not found: {genome}")
+    path = os.path.abspath(genome)
+    if base.endswith(FASTA_EXTENSIONS):
+        needed = [path + '.fai'] + ([path + '.gzi'] if low.endswith('.gz') else [])
+        missing = [n for n in needed if not os.path.exists(n)]
+        if missing:
+            raise FileNotFoundError(f"FASTA index missing: {', '.join(missing)}. "
+                                    f"Create it with: samtools faidx {shlex.quote(path)}"
+                                    + (" (the FASTA must be bgzip-compressed)" if low.endswith('.gz') else ''))
+    return path
+
+
+def _genome_bind_dirs(genome):
+    """Directories to bind for a local genome file: its own and its indexes', as given and resolved."""
+    if not os.path.isfile(genome):
+        return []
+    dirs = []
+    for f in (genome, genome + '.fai', genome + '.gzi'):
+        if os.path.exists(f):
+            dirs += [os.path.dirname(os.path.abspath(f)), os.path.dirname(os.path.realpath(f))]
+    return dirs
 
 
 # data extension -> (accepted index names as suffix templates, command that creates one).
