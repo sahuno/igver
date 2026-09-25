@@ -16,6 +16,7 @@ import gzip
 import os
 import random
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -54,8 +55,8 @@ def _write(path, text):
 
 def _igv_dir_of(cmd):
     """Return the --igvDirectory argument of an IGV command line, or None."""
-    m = re.search(r'--igvDirectory\s+(\S+)', cmd)
-    return m.group(1) if m else None
+    m = re.search(r'--igvDirectory\s+(.+)$', cmd)
+    return shlex.split(m.group(1))[0] if m else None
 
 
 def _run_cli(argv, render=True, log_text=None):
@@ -74,7 +75,7 @@ def _run_cli(argv, render=True, log_text=None):
     record = {'cmds': [], 'batches': [], 'prefs': [], 'igv_dirs': [], 'png_paths': []}
 
     def fake_igv(cmd, png_paths, stall_timeout, debug=False):
-        batch_path = cmd.split(' -b ')[1].split()[0]
+        batch_path = shlex.split(cmd.split(' -b ', 1)[1])[0]
         record['cmds'].append(cmd)
         record['batches'].append(open(batch_path).read())
         record['png_paths'].extend(png_paths)
@@ -492,6 +493,17 @@ class TestB4Sanitiser:
         png, _ = _parse_bed_file(str(bed), str(tmp_path))
         assert _names(png)[0].isascii()
 
+    def test_paths_with_spaces_quoted_in_batch_and_binds(self, tmp_path):
+        spaced = tmp_path / 'with space'
+        spaced.mkdir()
+        bam = _bam_with_index(spaced, '.bai')
+        _, rec = _run_cli(['-i', bam, '-r', REGION, '-o', str(tmp_path / 'out dir'), '-g', 'hg19',
+                           '--singularity-image', 'img.sif'])
+        lines = rec['batches'][0].splitlines()
+        assert f'load "{bam}"' in lines
+        assert f'snapshotDirectory "{tmp_path}/out dir"' in lines
+        assert f"-B '{spaced}'" in rec['cmds'][0]
+
     def test_tag_argument_sanitised(self, tmp_path):
         png, _ = _get_paths_and_regions(['chr1:1-2'], output_dir=str(tmp_path), tag='a b/c')
         assert _names(png) == ['chr1-1-2.a_b_c.png']
@@ -557,7 +569,7 @@ class TestB6Duplicates:
     def test_batch_has_no_duplicate_snapshots(self, tmp_path):
         bed = _write(tmp_path / 'd.hg19.bed', 'chr1\t100\t200\ta\nchr1\t100\t200\ta\n')
         batch, png = core.create_batch_script([str(TEST_BAM)], [bed], str(tmp_path))
-        snaps = [line for line in open(batch).read().splitlines() if line.startswith('snapshot')]
+        snaps = [line for line in open(batch).read().splitlines() if line.startswith('snapshot ')]
         assert len(snaps) == len(set(snaps)) == 1 and len(png) == 1
 
     def test_same_filename_different_locus_raises(self, tmp_path):

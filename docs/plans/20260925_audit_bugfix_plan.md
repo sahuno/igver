@@ -485,3 +485,10 @@ Phase C
   `chr1:1000-2000`, `chr1-1000-2000`), also for `-r` strings. A text-file line without its own tag now falls
   back to the `tag` argument (1.2.3 ignored it); the CLI has no `--tag`, so only the API sees this.
 - 2026-09-25 · B9/B12 · A zero-length BED interval (`start == end`) becomes a 1-bp `goto start+1-start+1`.
+- 2026-09-25 · B4 · Probe: IGV batch accepts double-quoted arguments (`load "/a b/x.bam"`,
+  `snapshotDirectory "/a b"`), so `load`/`snapshotDirectory`/`genome` arguments with whitespace are quoted;
+  Singularity `-B` binds and the IGV command's paths are `shlex.quote`d (1.2.3 broke host mode on a space:
+  E4c failed in host mode, passed in image mode where nothing extra is bound).
+- 2026-09-25 · B6 · Same filename + same locus → rendered once with one warning; same filename + different
+  locus is reachable (a text `chr1:100-200 x` and a BED `chr1 100 200 x`: the BED filename keeps its 0-based
+  start), so it raises `ValueError` naming the file instead of asserting.

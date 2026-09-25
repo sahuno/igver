@@ -1,6 +1,7 @@
 import gzip
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -147,16 +148,14 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
     # Pass output_format to create_batch_script
     batch_script, output_paths = create_batch_script(paths, regions, output_dir, genome, 
                                                      output_format=output_format, **kwargs)
+    bind_dirs = []
     for path in paths:
-        abspath = os.path.abspath(path)
-        realpath = os.path.realpath(path)
-        bam_dir_abs = os.path.split(abspath)[0]
-        bam_dir_real = os.path.split(realpath)[0]
-        singularity_args += f' -B {bam_dir_abs}'
-        if bam_dir_abs != bam_dir_real:
-            singularity_args += f' -B {bam_dir_real}'
-    singularity_args += f' -B {os.path.realpath(output_dir)}'
-    singularity_args += f' -B {tmpdir}'
+        if _is_url(path):
+            continue  # remote track: nothing to bind
+        bind_dirs += [os.path.dirname(os.path.abspath(path)), os.path.dirname(os.path.realpath(path))]
+    bind_dirs += [os.path.realpath(output_dir), tmpdir]
+    for bind_dir in dict.fromkeys(bind_dirs):  # de-duplicated, order kept
+        singularity_args += f' -B {shlex.quote(bind_dir)}'
 
     # Run IGV to generate the screenshots
     singularity_image = os.environ.get('IGVER_IMAGE', singularity_image)
@@ -460,7 +459,11 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         output_format (str): 'png', 'svg' or 'pdf' (pdf is written by IGV as svg).
 
     Returns:
-        (list of str, list of str): Snapshot paths and batch lines.
+        (list of str, list of str): Snapshot paths and batch lines. Exact duplicates (same locus,
+            same filename) are rendered once with a warning.
+
+    Raises:
+        ValueError: Two different loci map to the same filename.
 
     Example:
         >>> _records_to_batch([_region_record('chr1:1-2', ['chr1-1-2'], None)], '/out')[0]
@@ -468,8 +471,16 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
     """
     ext = 'svg' if output_format in ['svg', 'pdf'] else output_format
     png_paths, region_content = [], []
+    seen, duplicates = {}, []
     for rec in records:
         png_fname = _snapshot_filename(rec['region_tags'], rec['tag'], ext)
+        if png_fname in seen:
+            if seen[png_fname] != rec['goto']:
+                raise ValueError(f"Two different regions would write the same snapshot {png_fname}: "
+                                 f"'{seen[png_fname]}' and '{rec['goto']}'. Give them different names.")
+            duplicates.append(png_fname)  # same locus, same name: render once
+            continue
+        seen[png_fname] = rec['goto']
         png_paths.append(os.path.join(output_dir, png_fname))
         region_content.append(f"goto {rec['goto']}")
         if overlap_display and overlap_display != 'expand':
@@ -478,6 +489,9 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         if additional_pref:
             region_content.append(additional_pref)
         region_content.append(f'snapshot {png_fname}')
+    if duplicates:
+        print(f"[WARNING] Dropped {len(duplicates)} duplicate region(s) (same locus and snapshot name): "
+              f"{', '.join(duplicates)}")
     return png_paths, region_content
 
 
@@ -555,6 +569,26 @@ def _display_commands(paths, overlap_display):
     return '\n'.join(f'{overlap_display} {name}' for name in names)
 
 
+def _batch_arg(value):
+    """
+    Quote a batch-command argument that contains whitespace (IGV batch honours double quotes).
+
+    Example:
+        >>> _batch_arg('/data/with space/a.bam')
+        '"/data/with space/a.bam"'
+    """
+    if any(c.isspace() for c in value):
+        if '"' in value:
+            raise ValueError(f"Cannot pass a path containing both whitespace and '\"' to IGV: {value}")
+        return f'"{value}"'
+    return value
+
+
+def _is_url(path):
+    """True for a remote track such as https://..., s3://... or gs://... ."""
+    return re.match(r'^[A-Za-z][A-Za-z0-9+.-]*://', path) is not None
+
+
 def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max_panel_height=200,
                         overlap_display='squish', igv_config=None, color_by=None, output_format='png'):
     """
@@ -613,11 +647,11 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     # a container the working directory may not be the caller's.
     batch_content = [
         'new',
-        f'snapshotDirectory {os.path.abspath(output_dir)}',
-        f'genome {genome}'
+        f'snapshotDirectory {_batch_arg(os.path.abspath(output_dir))}',
+        f'genome {_batch_arg(genome)}'
     ]
     for bam in paths:
-        batch_content.append(f'load {os.path.abspath(bam)}')
+        batch_content.append(f'load {_batch_arg(bam if _is_url(bam) else os.path.abspath(bam))}')
     
     png_paths, region_content = _get_paths_and_regions(regions,
         output_dir=output_dir, overlap_display=_display_commands(paths, overlap_display),
@@ -922,8 +956,8 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
 
     def _command(run_dir):
         # igv_dir is the IGV install; run_dir is IGV's writable prefs/cache/log directory
-        cmd = (f'xvfb-run --auto-display --server-args="-screen 0 1920x1080x24" {igv_runfile} '
-               f'-b {batch_script} --igvDirectory {run_dir}')
+        cmd = (f'xvfb-run --auto-display --server-args="-screen 0 1920x1080x24" {shlex.quote(igv_runfile)} '
+               f'-b {shlex.quote(batch_script)} --igvDirectory {shlex.quote(run_dir)}')
         if use_singularity:
             cmd = f'singularity run {singularity_args} {singularity_image} {cmd}'
         return cmd
