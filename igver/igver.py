@@ -1017,10 +1017,11 @@ def _make_igv_run_dir(base, genome=None, igv_prefs=None):
 
 def _igv_log_excerpt(run_dir, n_lines=20):
     """
-    Return the last `n_lines` SEVERE/ERROR lines of a run directory's IGV log.
+    Return the last `n_lines` SEVERE/ERROR lines of a run directory's IGV log, then its last 5 lines.
 
-    Some errors that block IGV on a dialog (e.g. a 404 track URL) are never logged; then the
-    last 5 log lines are returned instead, which name the resource IGV was loading when it stopped.
+    Some errors that block IGV on a dialog (e.g. a 404 track URL) are never logged, and unrelated
+    SEVERE lines can appear, so the last lines (which name the resource IGV was loading when it
+    stopped) are always included.
 
     Parameters:
         run_dir (str): IGV directory of the run.
@@ -1039,9 +1040,8 @@ def _igv_log_excerpt(run_dir, n_lines=20):
     with open(log, errors='replace') as f:
         lines = [line.rstrip() for line in f if line.strip() and not line.startswith((' ', '\t'))]
     hits = [line for line in lines if line.startswith(('SEVERE', 'ERROR'))]
-    if hits:
-        return '\n'.join(hits[-n_lines:])
-    return f'(no SEVERE/ERROR lines in {log}; its last lines are:)\n' + '\n'.join(lines[-5:])
+    head = '\n'.join(hits[-n_lines:]) if hits else f'(no SEVERE/ERROR lines in {log})'
+    return f'{head}\n(last lines of {log}:)\n' + '\n'.join(lines[-5:])
 
 
 def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False, 

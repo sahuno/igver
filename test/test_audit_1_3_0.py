@@ -419,6 +419,17 @@ class TestB3IndexPreflight:
         bed.touch()
         assert find_missing_indexes(['https://example.org/x.bam', 's3://b/x.cram', str(bed)]) == []
 
+    def test_stall_failure_names_last_resource_despite_unrelated_severe(self, tmp_path, capsys):
+        # IGV logs nothing for a 404 track URL; an unrelated SEVERE line must not hide the last line
+        log = ("SEVERE [x] [DefaultExceptionHandler] java.lang.ClassFormatError: XSystemTrayPeer\n"
+               "INFO [x] [TrackLoader] Loading resource:  https://example.org/missing.bam\n"
+               "INFO [x] [ShutdownThread] Shutting down\n")
+        with pytest.raises(SystemExit):
+            _run_cli(['-i', str(TEST_BAM), '-r', REGION, '-o', str(tmp_path / 'o'),
+                      '-g', 'hg19', '--no-singularity'], render=False, log_text=log)
+        err = capsys.readouterr().err
+        assert 'ClassFormatError' in err and 'Loading resource:  https://example.org/missing.bam' in err
+
     def test_cli_exits_before_igv_on_missing_index(self, tmp_path, capsys):
         bam = _bam_with_index(tmp_path, '')
         _cli_exits(['-i', bam, '-r', REGION, '-o', str(tmp_path / 'o'), '-g', 'hg19',

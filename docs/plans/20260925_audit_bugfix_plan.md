@@ -504,3 +504,6 @@ Phase C
   not found") instead of reaching IGV. The binds also cover the realpath directories of `<f>.fai`/`<f>.gzi`,
   since an index can be a symlink into another directory. `DEFAULT_GENOME_KEY=<absolute FASTA path>` works
   (E8: one `Loading genome:` line).
+- 2026-09-25 · B1/B3 · Refinement after the full e2e run (host E3c failed): the excerpt now always ends with
+  the log's last 5 lines, after any SEVERE/ERROR lines, because the unrelated intermittent SEVERE line hid
+  the `Loading resource: <404 url>` line. Unit test: `test_stall_failure_names_last_resource_despite_unrelated_severe`.
