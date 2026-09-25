@@ -34,6 +34,13 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Log
 
+### 2026-09-25 16:55 · Claude Code · 1.2.3: -d applied to alignment tracks only (BED tracks were hidden)
+- **Done:** Root-caused the "BED track missing" layout issue. `create_batch_script` emitted a bare `squish` (the default `-d`), which IGV applies to every track; a squished or expanded RefSeq/BED track fills the panel and hides the tracks below it. Raw-IGV experiments at chr7 CFTR (hg38): BED-only with squish or expand hid the BED, collapse showed it; BAM+BED with bare squish hid it; `squish <bam basename>` showed everything. Added `_display_commands()` (named per-alignment-track commands; expand emits nothing; whitespace names skipped with a warning), `test/test_display_mode.py` (49 tests pass), and README/CLAUDE.md notes. Released 1.2.3: commit a537631, CI run 36187837744 green. Pulled the SIF; an inside-image test with default `-d` (BAM+BED, CFTR) shows the BED. `igver_latest.sif` → 1.2.3; the 1.2.2 SIF moved to `archived/`.
+- **Key paths:** igver/igver.py (`_display_commands`), igver/cli.py, test/test_display_mode.py; /data1/greenbab/software/images/igver_1.2.3_igv2.19.8.sif; /data1/greenbab/software/images/archived/igver_1.2.2_igv2.19.8.sif
+- **Commands that worked:** `/home/ahunos/miniforge3/envs/igver/bin/python -m pytest test/test_display_mode.py test/test_bed_support.py test/test_genome_aliases.py test/test_igv_version.py test/test_output_formats.py -q`; raw IGV in the image: `apptainer exec <sif> xvfb-run --auto-display --server-args="-screen 0 1920x1080x24" /opt/IGV_2.19.8/igv.sh -b <batch>`
+- **Known issues / blockers:** Overlapping BED features draw on one row in IGV's default collapsed mode (IGV's standard annotation view).
+- **Exact next steps:** see "Exact next steps" above.
+
 ### 2026-09-25 16:45 · Claude Code · Cached human hg38 genome JSON refreshed and verified
 - **Done:** Backed up `~/igv/genomes/hg38.json` (Oct 2024; fastaURL on igv-genepattern-org S3 → 403) and replaced it with https://igv.org/genomes/json/hg38.json; all 11 URLs return 200/206. The cached hg19 and hs1 JSONs were already fine. Rendered `chr17:61268000-61282000` with `igver_latest.sif` (1.2.2) on cpushort: BAM `AluEM/.../labpipe_alu2000/ALN/beerssim_HG38.sorted.bam` plus a BED with a `#` header. Exit 0 in 23 s; ideogram, coverage, reads, BCAS3 and the BED feature all shown. Found and documented a layout quirk: in BED-only views, `Refseq All` fills the panel and hides the BEDs.
 - **Key paths:** ~/igv/genomes/hg38.json (backup: hg38.json.bak_20260925_dead_s3); /data1/greenbab/users/ahunos/apps/llm_configs/claude/rules/igv.md
