@@ -236,6 +236,15 @@ Run tests with: `pytest test/test_cli.py`
   singularity exec --bind /data1/collab001,/data1/greenbab docker://sahuno/igver:latest igver ... --no-singularity
   ```
 
+### Display Mode Must Target Alignment Tracks
+- A bare `squish`/`expand` batch command applies to **every** track. A squished or expanded
+  annotation track (the genome's RefSeq track, BED files) grows to fill the panel and pushes
+  the tracks below it out of the snapshot. Before 1.2.3 the default `-d squish` hid every
+  BED track this way.
+- `_display_commands()` in `igver.py` emits `<mode> <basename>` for each BAM/CRAM/SAM track
+  only; `expand` (IGV's default for reads) emits nothing. Regression test: `test/test_display_mode.py`.
+- The same applies to hand-written `-c/--igv-config` commands: name the track.
+
 ### Large Region Sets (>1000 regions)
 - IGV batch scripts with many regions (e.g., 1483 L1 elements) can take a long time. Consider running via SLURM or in a `screen`/`tmux` session.
 - Use `-j/--jobs` to split the regions across parallel IGV processes; each job is a separate JVM,

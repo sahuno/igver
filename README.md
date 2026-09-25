@@ -6,6 +6,9 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 > The methylation, parallel-rendering and PDF features documented below live in this fork.
 > PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
+**New in 1.2.3 (this fork):**
+- **Fixed**: `-d/--overlap-display` (default `squish`) is now applied to BAM/CRAM/SAM tracks by name. It used to be a bare IGV command that also squished the RefSeq gene track, which then filled the panel and hid every BED/annotation track below it. Annotation tracks now keep IGV's default (collapsed) layout.
+
 **New in 1.2.2 (this fork):**
 - Refreshed the bundled genome definitions for hg19, hg38, mm10, mm39 and rn6 from igv.org; their sequence/annotation URLs pointed at retired S3 buckets (HTTP 403/404), which makes IGV hang on an error dialog in headless mode
 - If screenshots hang right after `Loading genome: ~/igv/genomes/<genome>.json`, your *cached* copy is stale: `curl -sf https://igv.org/genomes/json/<genome>.json -o ~/igv/genomes/<genome>.json`
@@ -29,6 +32,7 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 
 **Container versions:**
 - `sahuno/igver:latest` — most recent (recommended)
+- `sahuno/igver:1.2.3` — igver 1.2.3 with IGV 2.19.8; `-d` no longer hides BED tracks
 - `sahuno/igver:1.2.2` — igver 1.2.2 with IGV 2.19.8 and refreshed genome definitions
 - `sahuno/igver:1.2.1` — igver 1.2.1 with IGV 2.19.8
 - `sahuno/igver:1.2.0` — igver 1.2.0 with IGV 2.19.5

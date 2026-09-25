@@ -66,7 +66,8 @@ def parse_args():
         "-d", "--overlap-display",
         choices=["expand", "collapse", "squish"],
         default="squish",
-        help="Display mode for overlapping reads (default: squish)."
+        help="Display mode for overlapping reads (default: squish). Applied to BAM/CRAM/SAM "
+             "tracks only; annotation tracks (RefSeq, BED) keep IGV's default layout."
     )
     parser.add_argument(
         "-c", "--igv-config",

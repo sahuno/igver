@@ -238,7 +238,7 @@ def _parse_bed_file(bed_file, output_dir, overlap_display='squish', max_panel_he
             
             # Create batch content
             region_content.append(f'goto {region}')
-            if overlap_display != 'expand':
+            if overlap_display and overlap_display != 'expand':
                 region_content.append(overlap_display)
             region_content.append(f'maxPanelHeight {max_panel_height}')
             if additional_pref:
@@ -280,7 +280,7 @@ def _parse_region_file(region_file, output_dir, overlap_display='squish', max_pa
         png_paths.append(png_path)
         
         region_content.append(f'goto {region}')
-        if overlap_display != 'expand':
+        if overlap_display and overlap_display != 'expand':
             region_content.append(overlap_display)
         region_content.append(f'maxPanelHeight {max_panel_height}')
         if additional_pref:
@@ -303,7 +303,7 @@ def _parse_region_string(region, output_dir, overlap_display='squish', max_panel
     png_path = os.path.join(output_dir, png_fname)
     
     region_content.append(f'goto {region}')
-    if overlap_display != 'expand':
+    if overlap_display and overlap_display != 'expand':
         region_content.append(overlap_display)
     region_content.append(f'maxPanelHeight {max_panel_height}')
     if additional_pref:
@@ -313,6 +313,44 @@ def _parse_region_string(region, output_dir, overlap_display='squish', max_panel
     png_paths = [png_path]
 
     return png_paths, region_content
+
+
+ALIGNMENT_EXTENSIONS = ('.bam', '.cram', '.sam')
+
+
+def _display_commands(paths, overlap_display):
+    """
+    Build the batch commands that apply ``overlap_display`` to alignment tracks only.
+
+    A bare ``squish``/``expand`` applies to every track, and a squished or expanded annotation
+    track (the genome's RefSeq track, BED files) grows to fill the panel and pushes the tracks
+    below it out of the snapshot. Naming each alignment track keeps annotation tracks in IGV's
+    default layout. 'expand' is IGV's default for reads, so it emits nothing.
+
+    Parameters:
+        paths (list of str): Track paths as passed to ``load``.
+        overlap_display (str): 'expand', 'collapse' or 'squish'.
+
+    Returns:
+        str: Newline-joined commands, or '' when there is nothing to emit.
+
+    Example:
+        >>> _display_commands(['/data/a.bam', '/data/genes.bed'], 'squish')
+        'squish a.bam'
+    """
+    if overlap_display == 'expand':
+        return ''
+    names = []
+    for path in paths:
+        name = os.path.basename(path)
+        if not name.lower().endswith(ALIGNMENT_EXTENSIONS) or name in names:
+            continue
+        if any(c.isspace() for c in name):
+            # IGV splits batch arguments on whitespace, so this track cannot be targeted by name
+            print(f"[WARNING] '{name}' contains whitespace; -d {overlap_display} is not applied to it")
+            continue
+        names.append(name)
+    return '\n'.join(f'{overlap_display} {name}' for name in names)
 
 
 def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max_panel_height=200,
@@ -327,7 +365,9 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
         genome (str, optional): Genome version (default: 'hg19').
         tag (str, optional): Tag to suffix the PNG file name (default: None).
         max_panel_height (int, optional): Maximum panel height for IGV (default: 200).
-        overlap_display (str, optional): Display mode for overlapping reads ('expand', 'collapse', 'squish', default: 'squish').
+        overlap_display (str, optional): Display mode for overlapping reads ('expand', 'collapse', 'squish',
+            default: 'squish'). Applied to alignment tracks (BAM/CRAM/SAM) by name only; annotation
+            tracks keep IGV's default layout.
         igv_config (str, optional): Path to file containing IGV batch commands to inject before
             each snapshot (default: None). Must use IGV batch command syntax (e.g. 'colorBy BASE_MODIFICATION'),
             not KEY=VALUE properties format.
@@ -377,8 +417,8 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     for bam in paths:
         batch_content.append(f'load {os.path.abspath(bam)}')
     
-    png_paths, region_content = _get_paths_and_regions(regions, 
-        output_dir=output_dir, overlap_display=overlap_display, 
+    png_paths, region_content = _get_paths_and_regions(regions,
+        output_dir=output_dir, overlap_display=_display_commands(paths, overlap_display),
         max_panel_height=max_panel_height, additional_pref=additional_pref, tag=tag,
         output_format=output_format)
     batch_content += region_content
