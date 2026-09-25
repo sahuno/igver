@@ -38,7 +38,7 @@ def parse_args():
     )
     parser.add_argument(
         "-i", "--input", nargs="+", required=True,
-        help="Input BAM, BEDPE, VCF, or bigWig file(s), or a .txt file containing paths (one per line)"
+        help="Input BAM, BEDPE, VCF, or bigWig file(s); any .txt item is a track list (one path per line), expanded in place"
     )
     parser.add_argument(
         "-r", "--regions", nargs="+", required=True, help='Genomic regions (e.g., chr1:100000-200000) or regions file (e.g. region.txt or regions.bed)'
@@ -162,6 +162,39 @@ def _parse_input_file(input_file):
     return paths
 
 
+def expand_track_lists(items):
+    """
+    Replace every `.txt` item of -i (case-insensitive) with the track paths it lists, in place.
+
+    Order is preserved, several lists and lists mixed with tracks work; list contents follow
+    _parse_input_file (comments, blank lines, `~` expansion; relative paths stay relative to the
+    current directory).
+
+    Parameters:
+        items (list of str): The -i arguments.
+
+    Returns:
+        list of str: Track paths.
+
+    Raises:
+        FileNotFoundError: A .txt list does not exist.
+        ValueError: A .txt list names no tracks.
+
+    Example:
+        >>> expand_track_lists(['list.txt', 'extra.bam'])  # list.txt: "a.bam"
+        ['a.bam', 'extra.bam']
+    """
+    paths = []
+    for item in items:
+        if item.lower().endswith('.txt'):
+            listed = _parse_input_file(item)
+            print(f"[INFO] Loaded {len(listed)} track(s) from {item}")
+            paths += listed
+        else:
+            paths.append(item)
+    return paths
+
+
 def _load_genome_mappings():
     """
     Load the genome alias -> IGV genome id mapping from igver/data/genome_map.yaml.
@@ -222,19 +255,12 @@ def main():
             print(f"[ERROR] {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Parse input paths - handle both .txt file and direct paths
-    input_paths = []
-    if len(args.input) == 1 and args.input[0].endswith('.txt'):
-        # Input is a text file containing paths
-        try:
-            input_paths = _parse_input_file(args.input[0])
-            print(f"[INFO] Loaded {len(input_paths)} track(s) from {args.input[0]}")
-        except (FileNotFoundError, ValueError) as e:
-            print(str(e), file=sys.stderr)
-            sys.exit(1)
-    else:
-        # Input is direct paths
-        input_paths = args.input
+    # Tracks: every .txt item is a track list, expanded in place
+    try:
+        input_paths = expand_track_lists(args.input)
+    except (FileNotFoundError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
     # Ensure paths exist
     os.makedirs(args.output, exist_ok=True)

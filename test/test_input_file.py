@@ -172,9 +172,9 @@ class TestCLIWithInputFile:
 
     def test_cli_mixed_txt_and_direct(self):
         """
-        With more than one -i value the .txt is NOT expanded: cli.main() only treats the
-        input as a track list when exactly one argument ending in .txt is given. Here the
-        .txt itself is handed to IGV as a track.
+        A .txt track list mixed with direct tracks is expanded in place (igver 1.3.0, B7).
+        Before 1.3.0 only a single .txt argument was expanded and here the .txt itself was
+        handed to IGV as a track.
         """
         fake, record = _run_cli([
             "-i", str(self.input_file), str(TEST_BAM1),
@@ -186,9 +186,11 @@ class TestCLIWithInputFile:
 
         assert fake.call_count == 1
         batch_lines = record['batch'].splitlines()
-        assert f"load {os.path.abspath(self.input_file)}" in batch_lines
-        assert f"load {os.path.abspath(TEST_BAM1)}" in batch_lines
-        assert f"load {os.path.abspath(TEST_BAM2)}" not in batch_lines  # .txt was not expanded
+        loads = [line for line in batch_lines if line.startswith('load ')]
+        # list contents (BAM1, BAM2) in place, then the direct BAM1
+        assert loads == [f"load {os.path.abspath(TEST_BAM1)}", f"load {os.path.abspath(TEST_BAM2)}",
+                         f"load {os.path.abspath(TEST_BAM1)}"]
+        assert f"load {os.path.abspath(self.input_file)}" not in batch_lines  # the .txt is not a track
 
 
 class TestSingularityCompatibility:
