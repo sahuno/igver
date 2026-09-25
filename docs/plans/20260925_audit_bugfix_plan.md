@@ -496,3 +496,7 @@ Phase C
   `Loading resource: <url>`). When a run's log has no SEVERE/ERROR lines, the excerpt shows its last 5
   lines instead. E3c/E11f grep for that line; a `SEVERE` grep had only matched an unrelated, intermittent
   `ClassFormatError ... XSystemTrayPeer` line.
+- 2026-09-25 · B5 · Probe: IGV 2.19.8 does **not** hang on an unknown gene or contig; it silently snapshots
+  the whole-genome view (exit 0, nothing in the log or on stdout). There is no IGV signal to turn into a
+  "could not find locus" message, so igver warns for every non-locus `-r` string instead, and the gap is an
+  open unknown (validating contigs against the genome index would need the genome's .fai).

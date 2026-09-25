@@ -215,6 +215,8 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
 LOCUS_RE = re.compile(r'^(.+):([0-9][0-9,]*)-([0-9][0-9,]*)$')
 UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._+=,-]')
 MAX_FILENAME_BYTES = 200
+# A -r argument with one of these endings (or a '/') names a file, never a locus or gene
+REGION_FILE_EXTENSIONS = ('.bed', '.bed.gz', '.txt', '.tsv', '.csv')
 
 
 def parse_locus(token):
@@ -440,9 +442,18 @@ def _string_records(region, tag=None):
     tokens = region.split()
     loci = [parse_locus(t) for t in tokens]
     if tokens and all(loci):
+        for contig, start, end in loci:
+            if start > end:
+                raise ValueError(f"Region '{region}': start {start} > end {end}")
         return [_region_record(' '.join(f'{c}:{s}-{e}' for c, s, e in loci),
                                [f'{c}-{s}-{e}' for c, s, e in loci], tag)]
-    return [_region_record(region, [region.replace(':', '-').replace(' ', '.')], tag)]
+    if len(tokens) != 1:
+        raise ValueError(f"Region '{region}' is neither chr:start-end loci (several = split view) nor a "
+                         f"single feature name")
+    # IGV 2.19.8 snapshots the whole-genome view, silently, for a name or contig it does not know
+    print(f"[WARNING] '{region}' is not a chr:start-end locus; IGV will search for it as a feature "
+          f"name. If IGV does not know it, the snapshot silently shows the whole-genome view.")
+    return [_region_record(region, [region], tag)]
 
 
 def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_height=200,
@@ -748,6 +759,8 @@ def _get_paths_and_regions(regions, output_dir, tag=None, **kwargs):
                 records += _bed_records(region, tag)
             else:
                 records += _text_records(region, tag)
+        elif '/' in region or region.lower().endswith(REGION_FILE_EXTENSIONS):
+            raise FileNotFoundError(f"region file not found: {region}")
         else:
             records += _string_records(region, tag)
     return _records_to_batch(records, output_dir, **kwargs)
