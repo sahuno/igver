@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: Decide whether to point the shared igver_latest.sif at the new 1.2.1 / IGV 2.19.8 image
+next_action: none pending; optional /opt/igv stable symlink for future IGV bumps
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -17,21 +17,28 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Exact next steps
 
-1. Decide whether to replace `/data1/greenbab/software/images/igver_latest.sif` with `igver_1.2.1_igv2.19.8.sif` (see Open unknowns #1)
-2. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
+1. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
 
 ## Open unknowns
 
 | # | Question | Owner | Decide by | Status |
 |---|---|---|---|---|
-| 1 | Swap shared `igver_latest.sif` to the IGV 2.19.8 build? | Samuel Ahuno | 2026-10-09 | open |
+| 1 | Swap shared `igver_latest.sif` to the IGV 2.19.8 build? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: yes |
 
 ## Decisions
 
+- 2026-09-25 · Pointed shared `igver_latest.sif` at the 1.2.1 / IGV 2.19.8 image · the old file (2026-04-14) predated the overhaul: no --jobs/--stall-timeout/--version, hang-prone --methylation, broken aliases and PDF · by Samuel Ahuno
 - 2026-09-25 · Did not merge or cherry-pick upstream `renov` (4a3329e, "fix PIL imports in Dockerfile") · main already installs the Python deps, has the TMPDIR/`igver.cli` test fixes, and clones the fork; `renov` branches from 2025-03 and conflicts. Took only its IGV 2.19.8 bump · by Samuel Ahuno
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 15:30 · Claude Code · Shared igver_latest.sif now points at 1.2.1
+- **Done:** Renamed the old shared SIF to `igver_20260414.sif` (kept as a rollback) and made `igver_latest.sif` a relative symlink to `igver_1.2.1_igv2.19.8.sif`. Confirmed `apptainer exec igver_latest.sif igver --version` gives `igver 1.2.1`.
+- **Key paths:** /data1/greenbab/software/images/igver_latest.sif -> igver_1.2.1_igv2.19.8.sif; /data1/greenbab/software/images/igver_20260414.sif
+- **Commands that worked:** `cd /data1/greenbab/software/images && mv igver_latest.sif igver_20260414.sif && ln -s igver_1.2.1_igv2.19.8.sif igver_latest.sif`
+- **Known issues / blockers:** none. Rollback: `ln -sfn igver_20260414.sif igver_latest.sif`
+- **Exact next steps:** see "Exact next steps" above.
 
 ### 2026-09-25 15:15 · Claude Code · 1.2.1 image built, pulled and smoke-tested
 - **Done:** Pushed c9e4f6c; GitHub Actions run 36177308430 succeeded (5m06s) and pushed `sahuno/igver:latest`, `:1.2.1` and `:c9e4f6c`. Pulled the SIF and confirmed IGV 2.19.8, the `/opt/IGV_2.19.5` symlink and `igver 1.2.1`. On cpushort, rendered `8:32534767-32536767` of `test/test_tumor.bam` (hg19) three ways, all exit 0 with a correct PNG: (a) inside the SIF with `--no-singularity`, (b) host igver 1.2.1 wrapping the SIF, (c) host igver with `--igv-dir /opt/IGV_2.19.5` (the old default).
