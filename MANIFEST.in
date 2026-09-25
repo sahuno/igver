@@ -1,4 +1,4 @@
 include README.md
 include requirements.txt
 include LICENSE
-recursive-include igver/data *.yaml
+recursive-include igver/data *.yaml *.properties

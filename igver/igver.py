@@ -1,10 +1,17 @@
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 import time
+
+try:
+    from importlib import resources  # Python 3.9+
+except ImportError:
+    import importlib_resources as resources  # Backport for Python 3.7-3.8
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -96,7 +103,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
                      overwrite=True, remove_png=True, dpi=300,
                      singularity_image='docker://sahuno/igver:latest', singularity_args='-B /home',
                      debug=False, output_format='png', use_singularity=None,
-                     load_figures=True, jobs=1, stall_timeout=600, **kwargs):
+                     load_figures=True, jobs=1, stall_timeout=600, igv_prefs=None, **kwargs):
     """
     Generates IGV screenshots and optionally loads them into Matplotlib figures.
 
@@ -119,6 +126,8 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
             `jobs` contiguous chunks, each rendered by its own IGV/JVM (default: 1).
         stall_timeout (int, optional): Kill an IGV process if it produces no new snapshot for this
             many seconds, then retry the missing regions once; 0 disables (default: 600).
+        igv_prefs (list of str, optional): Extra 'KEY=VALUE' IGV preferences appended after the bundled
+            template in each run's IGV directory (see parse_igv_prefs) (default: None).
         **kwargs (optional): *kwargs* such as tag, max_panel_height, overlap_display, igv_config for create_batch_script
 
     Returns:
@@ -153,7 +162,8 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
     def _run(batch, paths):
         run_igv(batch, paths, igv_dir, overwrite,
             singularity_image=singularity_image, singularity_args=singularity_args,
-            debug=debug, use_singularity=use_singularity, stall_timeout=stall_timeout)
+            debug=debug, use_singularity=use_singularity, stall_timeout=stall_timeout,
+            igv_prefs=igv_prefs, run_dir_base=tmpdir)
 
     if jobs > 1:
         # Split the batch into contiguous region chunks and render each in its own IGV process
@@ -173,7 +183,14 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
             _run(chunk_batch, [p for p in output_paths if os.path.basename(p) in names])
 
         with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
-            list(pool.map(_run_chunk, chunks))  # list() re-raises worker exceptions
+            futures = [pool.submit(_run_chunk, chunk) for chunk in chunks]
+        # Report every failed chunk, not only the first: each names its own kept IGV directory
+        errors = [f.exception() for f in futures if f.exception() is not None]
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise RuntimeError(f"{len(errors)} of {len(chunks)} parallel IGV processes failed:\n"
+                               + '\n'.join(f'  [{i + 1}] {e}' for i, e in enumerate(errors)))
     else:
         _run(batch_script, output_paths)
 
@@ -543,7 +560,7 @@ def _run_until_stalled(cmd, png_paths, stall_timeout, debug=False):
             finished = False
             print(f"[WARNING:{time.ctime()}] IGV produced no new snapshot for {stall_timeout}s "
                   f"({n_done}/{len(png_paths)} done); killed. This usually means IGV hit an error "
-                  f"and is blocked on a dialog. Check ~/igv/igv0.log.", file=sys.stderr)
+                  f"and is blocked on a dialog.", file=sys.stderr)
             break
     if debug:
         print(f"[STDOUT:{time.ctime()}]\n{stdout.decode()}")
@@ -551,11 +568,135 @@ def _run_until_stalled(cmd, png_paths, stall_timeout, debug=False):
     return finished
 
 
+PREFS_TEMPLATE = 'igv_prefs.properties'
+
+
+def read_prefs_template():
+    """
+    Return the bundled IGV preferences template (igver/data/igv_prefs.properties).
+
+    Returns:
+        str: The template text (KEY=VALUE lines and comments).
+
+    Example:
+        >>> 'PORT_ENABLED=false' in read_prefs_template()
+        True
+    """
+    return resources.files('igver.data').joinpath(PREFS_TEMPLATE).read_text()
+
+
+def parse_igv_prefs(path):
+    """
+    Read a user IGV preferences file for --igv-prefs.
+
+    Blank lines and '#' comments are skipped; every other line must be KEY=VALUE with a non-empty,
+    whitespace-free key. Whitespace around the key and value is removed.
+
+    Parameters:
+        path (str): Path to the preferences file.
+
+    Returns:
+        list of str: Normalised 'KEY=VALUE' lines, in file order (may be empty).
+
+    Raises:
+        FileNotFoundError: The file does not exist.
+        ValueError: A line is not KEY=VALUE; the message starts with '<path>:<line number>'.
+
+    Example:
+        >>> parse_igv_prefs('my.prefs')  # file: "SAM.SHOW_SOFT_CLIPPED = true"
+        ['SAM.SHOW_SOFT_CLIPPED=true']
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"--igv-prefs file not found: {path}")
+    lines = []
+    with open(path) as f:
+        for n, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, sep, value = line.partition('=')
+            key, value = key.strip(), value.strip()
+            if not sep or not key or any(c.isspace() for c in key):
+                raise ValueError(f"{path}:{n}: not a KEY=VALUE preference line: '{line}'")
+            lines.append(f'{key}={value}')
+    return lines
+
+
+def _batch_genome(batch_script):
+    """Return the argument of the batch file's `genome` line, or None."""
+    with open(batch_script) as f:
+        for line in f:
+            if line.startswith('genome '):
+                return line[len('genome '):].strip().strip('"')
+    return None
+
+
+def _make_igv_run_dir(base, genome=None, igv_prefs=None):
+    """
+    Create a fresh, run-scoped IGV directory holding igver's preferences.
+
+    IGV keeps a prefs.properties it finds in --igvDirectory; without one it copies the user's
+    ~/igv/prefs.properties in, so the file is always written here.
+
+    Parameters:
+        base (str): Parent directory (must be visible inside the container).
+        genome (str, optional): Written as DEFAULT_GENOME_KEY, so IGV loads only this genome at
+            startup instead of its default genome first (default: None).
+        igv_prefs (list of str, optional): Extra 'KEY=VALUE' lines appended last (default: None).
+
+    Returns:
+        str: Path of the new directory (prefix 'igver_igv_').
+
+    Example:
+        >>> d = _make_igv_run_dir('/tmp', genome='hg19')
+        >>> 'DEFAULT_GENOME_KEY=hg19' in open(os.path.join(d, 'prefs.properties')).read()
+        True
+    """
+    os.makedirs(base, exist_ok=True)
+    run_dir = tempfile.mkdtemp(prefix='igver_igv_', dir=base)
+    lines = [read_prefs_template().rstrip('\n'), '', '# written by igver for this run']
+    if genome:
+        lines.append(f'DEFAULT_GENOME_KEY={genome}')
+    if igv_prefs:
+        lines += ['# --igv-prefs'] + list(igv_prefs)
+    with open(os.path.join(run_dir, 'prefs.properties'), 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    return run_dir
+
+
+def _igv_log_excerpt(run_dir, n_lines=20):
+    """
+    Return the last `n_lines` SEVERE/ERROR lines of a run directory's IGV log.
+
+    Parameters:
+        run_dir (str): IGV directory of the run.
+        n_lines (int, optional): Maximum number of lines (default: 20).
+
+    Returns:
+        str: The lines joined by newlines, or a note that the log is missing or has no errors.
+
+    Example:
+        >>> _igv_log_excerpt('/tmp/igver_igv_x')
+        'SEVERE [..] [TrackLoader] Error loading /data/x.bam ...'
+    """
+    log = os.path.join(run_dir, 'igv0.log')
+    if not os.path.exists(log):
+        return f'(no IGV log at {log})'
+    with open(log, errors='replace') as f:
+        hits = [line.rstrip() for line in f if line.startswith(('SEVERE', 'ERROR'))]
+    return '\n'.join(hits[-n_lines:]) if hits else f'(no SEVERE/ERROR lines in {log})'
+
+
 def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False, 
             singularity_image='docker://sahuno/igver:latest', singularity_args='-B /data1 -B /home',
-            debug=False, use_singularity=None, stall_timeout=600):
+            debug=False, use_singularity=None, stall_timeout=600, igv_prefs=None,
+            run_dir_base=None):
     """
     Runs IGV using the generated batch script and ensures all PNG screenshots are created.
+
+    Every IGV launch gets a fresh IGV directory (``--igvDirectory``) with igver's preferences, so
+    the user's ~/igv never affects the output. It is deleted on success and kept on failure, and
+    its log excerpt goes into the error message.
 
     Parameters:
         batch_script (str): Path to the IGV batch script.
@@ -565,6 +706,9 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
         debug (bool, optional): Whether to show logs for debugging (default: False).
         stall_timeout (int, optional): Kill IGV if no new snapshot appears for this many seconds;
             0 disables (default: 600). Guards against IGV blocking on an error dialog.
+        igv_prefs (list of str, optional): Extra 'KEY=VALUE' preferences for the run (default: None).
+        run_dir_base (str, optional): Where run IGV directories are created; must be visible inside
+            the container (default: $TMPDIR, else the batch script's directory).
 
     Returns:
         list of str: Paths to the generated PNG files.
@@ -577,20 +721,23 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
     igv_runfile = os.path.join(igv_dir, "igv.sh")
     # assert os.path.exists(igv_runfile), f"[ERROR:{time.ctime()}] {igv_runfile} does not exist"
 
-    # IGV command
-    cmd = f'xvfb-run --auto-display --server-args="-screen 0 1920x1080x24" {igv_runfile} -b {batch_script} --igvDirectory {igv_dir}'
-    
-    # Only wrap with singularity if needed
-    if use_singularity:
-        cmd = f'singularity run {singularity_args} {singularity_image} {cmd}'
-        if debug:
-            print(f"[LOG:{time.ctime()}] Running IGV with Singularity")
-    else:
-        if debug:
-            print(f"[LOG:{time.ctime()}] Running IGV directly (container mode)")
-    
+    if run_dir_base is None:
+        run_dir_base = os.environ.get('TMPDIR') or os.path.dirname(os.path.abspath(batch_script))
+    genome = _batch_genome(batch_script)
+
+    def _command(run_dir):
+        # igv_dir is the IGV install; run_dir is IGV's writable prefs/cache/log directory
+        cmd = (f'xvfb-run --auto-display --server-args="-screen 0 1920x1080x24" {igv_runfile} '
+               f'-b {batch_script} --igvDirectory {run_dir}')
+        if use_singularity:
+            cmd = f'singularity run {singularity_args} {singularity_image} {cmd}'
+        return cmd
+
     if debug:
-        print(f"[LOG:{time.ctime()}] Running IGV command:\n{cmd}")
+        mode = 'with Singularity' if use_singularity else 'directly (container mode)'
+        print(f"[LOG:{time.ctime()}] Running IGV {mode}")
+        with open(batch_script) as f:
+            print(f"[LOG:{time.ctime()}] Batch script {batch_script}:\n{f.read()}")
 
     # If overwrite is enabled, remove existing PNG files
     if overwrite:
@@ -598,6 +745,7 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
 
     # Run IGV; on retry, rewrite the batch to cover only the regions still missing
     max_iter = 2
+    run_dir = None
     for n_iter in range(max_iter):
         missing = [png for png in png_paths if not os.path.exists(png)]
         if not missing:
@@ -607,13 +755,23 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
                 header, blocks = _split_batch(f.read())
             want = {os.path.basename(png) for png in missing}
             _write_batch(batch_script, header, [b for b in blocks if _snapshot_name(b) in want])
+            print(f"[WARNING:{time.ctime()}] {len(missing)} snapshot(s) missing; IGV log errors from "
+                  f"{run_dir}:\n{_igv_log_excerpt(run_dir)}", file=sys.stderr)
+            shutil.rmtree(run_dir, ignore_errors=True)  # the retry gets its own directory
+        run_dir = _make_igv_run_dir(run_dir_base, genome=genome, igv_prefs=igv_prefs)
+        cmd = _command(run_dir)
         if debug:
-            print(f"[LOG:{time.ctime()}] Iteration #{n_iter + 1}: rendering {len(missing)} missing snapshot(s)")
+            print(f"[LOG:{time.ctime()}] Iteration #{n_iter + 1}: rendering {len(missing)} missing snapshot(s); "
+                  f"IGV directory {run_dir}")
+            print(f"[LOG:{time.ctime()}] Running IGV command:\n{cmd}")
         _run_until_stalled(cmd, png_paths, stall_timeout, debug)
 
     if not all(os.path.exists(png) for png in png_paths):
         raise RuntimeError(f"[ERROR:{time.ctime()}] Failed to generate all PNG files after {max_iter} iterations. "
-                           f"Batch for the missing regions kept at {batch_script}; see ~/igv/igv0.log for IGV errors.")
+                           f"Batch for the missing regions kept at {batch_script}; IGV directory kept at "
+                           f"{run_dir} . Last IGV log errors:\n{_igv_log_excerpt(run_dir)}")
+    if run_dir:
+        shutil.rmtree(run_dir, ignore_errors=True)
 
     # Cleanup batch script
     os.remove(batch_script)

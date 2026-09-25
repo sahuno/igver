@@ -8,6 +8,7 @@ import yaml
 # Add package root to sys.path when running as a script
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from igver import __version__, load_screenshots
+from igver.igver import parse_igv_prefs
 
 try:
     from importlib import resources  # Python 3.9+
@@ -86,6 +87,11 @@ def parse_args():
         "--methylation", "--meth",
         action="store_const", const="BASE_MODIFICATION", dest="color_by",
         help="Shortcut for --color-by BASE_MODIFICATION (ONT/PacBio methylation coloring)."
+    )
+    parser.add_argument(
+        "--igv-prefs", metavar="FILE",
+        help="Extra IGV preferences, one KEY=VALUE per line (e.g. SAM.SHOW_SOFT_CLIPPED=true), applied "
+             "after igver's bundled template. Each run uses a fresh IGV directory, so ~/igv is never read."
     )
     parser.add_argument(
         "-j", "--jobs", type=int, default=1,
@@ -208,6 +214,14 @@ def main():
         )
         sys.exit(1)
 
+    igv_prefs = None
+    if args.igv_prefs:
+        try:
+            igv_prefs = parse_igv_prefs(args.igv_prefs)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+
     # Parse input paths - handle both .txt file and direct paths
     input_paths = []
     if len(args.input) == 1 and args.input[0].endswith('.txt'):
@@ -253,6 +267,7 @@ def main():
             "color_by": args.color_by,
             "jobs": args.jobs,
             "stall_timeout": args.stall_timeout,
+            "igv_prefs": igv_prefs,
         }
         _ = load_screenshots(**kwargs)
 

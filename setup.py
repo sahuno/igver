@@ -5,7 +5,7 @@ setup(
     version='1.2.3',
     packages=find_packages(),
     package_data={
-        'igver': ['data/genome_map.yaml'],
+        'igver': ['data/genome_map.yaml', 'data/igv_prefs.properties'],
     },
     install_requires=[
         'matplotlib',
