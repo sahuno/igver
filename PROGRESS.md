@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: none pending; archive the 1.2.1 SIF once RetroEM stops naming it
+next_action: User to pick which of the 12 audited bugs to fix (see 2026-09-25 17:20 log entry)
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -33,6 +33,25 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 17:20 · Claude Code · Bug audit of igver 1.2.3: ranked list (nothing fixed yet)
+- **Done:** Read cli.py and igver.py; probed edge cases with Python and with real IGV runs (igver_latest.sif, hg19 test BAM, `--stall-timeout 45`). Ranked findings (✓ = reproduced; code = confirmed by reading only):
+  1. ✓ `--igvDirectory /opt/IGV_2.19.8` is ignored (read-only in the SIF), so IGV always uses the user's `~/igv` ("IGV Directory: /home/ahunos/igv"). Personal prefs change the output (SAM.DOWNSAMPLE_READS=false, SHOW_SOFT_CLIPPED, IGV.Bounds sets the image width, THIRD_GEN colorBy), and stale genome caches caused today's mm10 hang.
+  2. ✓ Text region files silently produce wrong screenshots with exit 0: a line with no `chr:start-end` → `goto ` → whole-genome view saved as a hidden `.name.png`; a tag that looks like a locus (house locus ID with a `+` strand) → split screen with a bogus second panel; multi-word tags keep only the last word.
+  3. ✓ Missing BAM/CRAM index → IGV dialog hang → killed twice → fails after 2 × stall-timeout (20 min at the default) with a generic message.
+  4. ✓ BED name containing a space or `/` (e.g. RepeatMasker `LINE/L1`) → the snapshot is never written; fails after retries with a generic error.
+  5. ✓ Typo in a region file path → treated as a locus string → fails with a misleading error instead of "file not found".
+  6. code: duplicate snapshot names (same region + name) → silent overwrite; a race with `-j`.
+  7. code: a `.txt` track list is only recognized when it's the sole `-i` argument; mixed with tracks, it is loaded as a track → IGV error → hang.
+  8. code: a relative FASTA passed to `-g` breaks (IGV resolves it against the batch file's directory); the FASTA directory isn't auto-bound.
+  9. code: space-separated BED → every line silently skipped → "No screenshots generated" with no reason.
+  10. code: the image build clones `main` HEAD rather than the commit being built, so a later rebuild of a tag can hold newer code.
+  11. ✓ `-j` JVMs share `~/igv`: the log rotates (`igv0.log.1`), so the error hint points at the wrong file; port 60151 BindException (harmless).
+  12. code: BED start (0-based) is passed to `goto` (1-based) → view shifted by 1 bp. Cosmetic.
+- **Key paths:** igver/igver.py (`_parse_region_file`, `_parse_bed_file`, `run_igv`), igver/cli.py (`main`), docker/Dockerfile
+- **Commands that worked:** probe pattern: `apptainer exec --bind /data1/greenbab <sif> igver -i <bam> -r <regions> -o <out> -g hg19 --no-singularity --stall-timeout 45`
+- **Known issues / blockers:** `srun` from this VS Code session runs as a step inside the interactive allocation (job 14843879 on iscf025), not on cpushort, so `-c 2` is refused. Earlier "cpushort" test notes in this log actually ran there.
+- **Exact next steps:** get the user's pick of which bugs to fix (the top 5 are cheap: isolated IGV prefs dir, region-line validation, index preflight, filename sanitising, region-file existence check).
 
 ### 2026-09-25 16:55 · Claude Code · 1.2.3: -d applied to alignment tracks only (BED tracks were hidden)
 - **Done:** Root-caused the "BED track missing" layout issue. `create_batch_script` emitted a bare `squish` (the default `-d`), which IGV applies to every track; a squished or expanded RefSeq/BED track fills the panel and hides the tracks below it. Raw-IGV experiments at chr7 CFTR (hg38): BED-only with squish or expand hid the BED, collapse showed it; BAM+BED with bare squish hid it; `squish <bam basename>` showed everything. Added `_display_commands()` (named per-alignment-track commands; expand emits nothing; whitespace names skipped with a warning), `test/test_display_mode.py` (49 tests pass), and README/CLAUDE.md notes. Released 1.2.3: commit a537631, CI run 36187837744 green. Pulled the SIF; an inside-image test with default `-d` (BAM+BED, CFTR) shows the BED. `igver_latest.sif` → 1.2.3; the 1.2.2 SIF moved to `archived/`.
