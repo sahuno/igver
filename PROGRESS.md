@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: Execute docs/plans/20260925_audit_bugfix_plan.md (Phase A first)
+next_action: Continue Phase B of docs/plans/20260925_audit_bugfix_plan.md on branch fix/audit-1.3.0 (next: B2+B9+B12)
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -26,6 +26,10 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 | # | Question | Owner | Decide by | Status |
 |---|---|---|---|---|
 | 1 | Swap shared `igver_latest.sif` to the IGV 2.19.8 build? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: yes |
+| 2 | Keep `IGV.Bounds=0,0,1150,800` in the bundled prefs template, or choose another snapshot size? (1150 px = the de-facto width of existing lab figures; plan says the user decides) | Samuel Ahuno | 2026-10-09 | open |
+| 3 | E1e (B1 determinism) cannot meet "< 0.5 % pixels differ": 4 identical runs differ 0.58–2.44 %, **only** in UI chrome (ruler/sequence band y≈100–120, 3-row dividers y≈130 and y≈333); the alignment area (y 136–330) is pixel-identical in every pair. Not downsampling (`SAM.DOWNSAMPLE_READS=false`: 1.16–2.44 %). `setSleepInterval 4000` → 0–0.58 % (one 3-row strip left) but costs ~4 s per batch command. Accept chrome-only variance (and measure only the data area), adopt a sleep interval, or leave as is? | Samuel Ahuno | 2026-10-09 | open |
+| 4 | Unknown gene or unknown contig (`-r NOTAGENE123`, `NOSUCHCONTIG:1-100`): IGV 2.19.8 silently snapshots the **whole-genome view**, exit 0, nothing in igv0.log or stdout (probe 2026-09-25). igver can only warn. Validate contigs against the genome's .fai/chrom sizes in a later release? | Samuel Ahuno | 2026-10-09 | open |
+| 5 | `-f pdf` is broken in 1.2.3 itself (pre-existing, outside the 12 audited bugs): IGV 2.19.8 SVGs have no width/height/viewBox, so cairosvg writes an 845-byte empty PDF and igver exits 1 (host); the image has no cairosvg at all. e2e R4 fails for this reason. Fix in 1.3.x (e.g. derive the canvas size, or build the PDF from the PNG)? | Samuel Ahuno | 2026-10-09 | open |
 
 ## Decisions
 
@@ -34,6 +38,23 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 19:30 · Claude Code · Audit plan: Phase A done, B1+B11 implemented (branch fix/audit-1.3.0)
+- **Done:**
+  - Probes with raw IGV 2.19.8 (igver_latest.sif): a writable `--igvDirectory` is honoured (`IGV Directory: <dir>`); without a prefs file IGV **copies ~/igv/prefs.properties** in; a pre-written one is kept; `-g hg19` does not stop the hg38 default load, `DEFAULT_GENOME_KEY=hg19` does (1 `Loading genome` line). Sub-path bind `fixture:/home/ahunos/igv` over `-B /home` works. Stale index (index older than BAM): IGV renders, no dialog → no pre-flight warning needed (E3b). Double-quoted batch paths with spaces work. Unknown gene/contig → silent whole-genome snapshot. Corrupt BAM / unknown file type render without a dialog; a 404 URL track and a dead-URL genome JSON block IGV.
+  - A1: `test/test_audit_1_3_0.py` (100 tests). Baseline on fed1676: **90 failed, 10 passed**; the 10 passes are preservation tests (legacy SV lines, chrUn contig, CRLF/tabs, gene name, split view, alias, BED headers, display mode, --methylation, single .txt list). Two vacuous passes were tightened first (run-dir removal, `.lead` name).
+  - A2: `test/e2e/run_e2e.sh` + `e2e_runner.py` + `cases.tsv` (28 cases). Baseline (sbatch jobs 14942391 host / 14942392 image, plus a local re-run of the strengthened E3c/E7/E8/E11f): **host 3/28 pass (E3b, R1, R2); image 4/28 pass (E3b, E4c, R1, R2)**. Negative controls: E1a/E1b render 700 px wide with the poisoned ~/igv; E1c changes the real `~/igv/igv0.log` mtime; E2c writes a hidden `.locus.png`; E8 renders against the personal default genome (every read a mismatch); E3a hangs until killed. R4 (-f pdf) fails on 1.2.3 itself (open unknown 5).
+  - A3: `test/e2e/fixtures/poisoned_igv/` (IGV.Bounds 700x500, soft clips on, no downsampling; mm10/hg19 JSONs with every URL → s3 igv.broadinstitute.org, verified 403). The harness binds a **copy** per case.
+  - B1+B11 implemented (commit 0aa66fa). Unit: TestB1 + TestB11 16/16 pass; existing suite 88 passed, 1 skipped. e2e host and image: E1, E1a, E1b, E1c, E1d, E1d_bad, E11 PASS. E1d soft clips: the alignment area differs from E1 by 2,432 px in both modes while the no-prefs controls differ by 0; crop inspected. Added startup time: none (fresh runs 20–22 s vs 21–23 s on 1.2.3; one genome load instead of two).
+  - Still open for B1/B11: failure-path (E3c) and E11f need the B3 URL-track handling (1.2.3's CLI rejects URL tracks as "does not exist"); E1e blocked (open unknown 3).
+- **Key paths:** test/test_audit_1_3_0.py; test/e2e/{run_e2e.sh,e2e_runner.py,cases.tsv,fixtures/}; igver/data/igv_prefs.properties; igver/igver.py (`read_prefs_template`, `parse_igv_prefs`, `_make_igv_run_dir`, `_igv_log_excerpt`, `run_igv`); igver/cli.py (`--igv-prefs`); baseline code export test/e2e/out/baseline_src/ (wrapper `igver_baseline`, gitignored)
+- **Commands that worked:**
+  - `/home/ahunos/miniforge3/envs/igver/bin/python -m pytest test/test_audit_1_3_0.py -q -p no:cacheprovider`
+  - `test/e2e/run_e2e.sh host --cases E1,E1a` (on a compute node) and `test/e2e/run_e2e.sh image --cases ...` (checks the working-tree bind first)
+  - full run: `sbatch -p cpushort --exclude=isca071 -c 2 --mem=16G -t 01:30:00 -o test/e2e/logs/slurm_%j.out test/e2e/run_e2e.sh host`
+  - 1.2.3 baseline in host mode: `E2E_IGVER_HOST=$PWD/test/e2e/out/baseline_src/igver_baseline test/e2e/run_e2e.sh host --tag baseline` (PYTHONPATH does not work: the editable-install finder wins); image mode: `--no-repo-bind`
+- **Known issues / blockers:** `srun` from this session queues forever (step 0 holds the whole allocation 14937376 on isca017); run quick IGV checks directly on the node instead. E1e, unknown-locus and PDF: open unknowns 3–5.
+- **Exact next steps:** B2+B9+B12 → B4+B6 → B3 (incl. URL tracks: skip existence check/binds) → B5 → B7 → B8 → B10, each with unit + e2e in both modes and a commit; then full e2e both modes (sbatch) and Phase C.
 
 ### 2026-09-25 17:20 · Claude Code · Bug audit of igver 1.2.3: ranked list (nothing fixed yet)
 - **Done:** Read cli.py and igver.py; probed edge cases with Python and with real IGV runs (igver_latest.sif, hg19 test BAM, `--stall-timeout 45`). Ranked findings (✓ = reproduced; code = confirmed by reading only):
