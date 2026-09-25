@@ -7,6 +7,9 @@ on:
       - 'docker/**'
       - 'igver/**'
       - 'setup.py'
+      - 'MANIFEST.in'
+      - 'requirements.txt'
+      - '.dockerignore'
       - '.github/workflows/docker-publish.yml'
   release:
     types: [published]
@@ -55,7 +58,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./docker
+          context: .
           file: ./docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -63,4 +66,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            CACHE_BUST=${{ github.sha }}
+            GIT_SHA=${{ github.sha }}

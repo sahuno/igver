@@ -1,0 +1,23 @@
+# Build context is the repo root (docker/Dockerfile COPYs setup.py, README.md, requirements.txt,
+# MANIFEST.in, LICENSE, igver/ and docker/json/). Keep everything else out of the image.
+.git
+.github/
+.claude/
+CLAUDE/
+.pytest_cache/
+**/__pycache__/
+*.egg-info/
+test/
+docs/
+igver_agent/
+igver-mcp/
+igver_final_test/
+results/
+logs/
+*.bam
+*.bai
+*.cram
+*.crai
+*.log
+hs_err_pid*
+.*/
