@@ -35,9 +35,9 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ### 2026-09-25 15:30 · Claude Code · Shared igver_latest.sif now points at 1.2.1
 - **Done:** Renamed the old shared SIF to `igver_20260414.sif` (kept as a rollback) and made `igver_latest.sif` a relative symlink to `igver_1.2.1_igv2.19.8.sif`. Confirmed `apptainer exec igver_latest.sif igver --version` gives `igver 1.2.1`.
-- **Key paths:** /data1/greenbab/software/images/igver_latest.sif -> igver_1.2.1_igv2.19.8.sif; /data1/greenbab/software/images/igver_20260414.sif
+- **Key paths:** /data1/greenbab/software/images/igver_latest.sif -> igver_1.2.1_igv2.19.8.sif; /data1/greenbab/software/images/archived/igver_20260414.sif
 - **Commands that worked:** `cd /data1/greenbab/software/images && mv igver_latest.sif igver_20260414.sif && ln -s igver_1.2.1_igv2.19.8.sif igver_latest.sif`
-- **Known issues / blockers:** none. Rollback: `ln -sfn igver_20260414.sif igver_latest.sif`
+- **Known issues / blockers:** none. Rollback: `ln -sfn archived/igver_20260414.sif igver_latest.sif` (old SIF moved to `archived/` later the same day)
 - **Exact next steps:** see "Exact next steps" above.
 
 ### 2026-09-25 15:15 · Claude Code · 1.2.1 image built, pulled and smoke-tested
