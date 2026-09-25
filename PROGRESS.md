@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: Refresh the stale cached ~/igv/genomes human JSON (dead fastaURL) if the user agrees
+next_action: none pending; archive the 1.2.1 SIF once RetroEM stops naming it
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -17,9 +17,8 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Exact next steps
 
-1. Refresh the user's cached `~/igv/genomes/hg38.json`: its fastaURL (igv-genepattern-org S3) returns 403, the same failure as mm10.
-2. When the RetroEM `03_igv_top_loci.sbatch` no longer names `igver_1.2.1_igv2.19.8.sif`, move that SIF to `images/archived/`
-3. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
+1. When the RetroEM `03_igv_top_loci.sbatch` no longer names `igver_1.2.1_igv2.19.8.sif`, move that SIF to `images/archived/`
+2. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
 
 ## Open unknowns
 
@@ -34,6 +33,13 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 16:45 · Claude Code · Cached human hg38 genome JSON refreshed and verified
+- **Done:** Backed up `~/igv/genomes/hg38.json` (Oct 2024; fastaURL on igv-genepattern-org S3 → 403) and replaced it with https://igv.org/genomes/json/hg38.json; all 11 URLs return 200/206. The cached hg19 and hs1 JSONs were already fine. Rendered `chr17:61268000-61282000` with `igver_latest.sif` (1.2.2) on cpushort: BAM `AluEM/.../labpipe_alu2000/ALN/beerssim_HG38.sorted.bam` plus a BED with a `#` header. Exit 0 in 23 s; ideogram, coverage, reads, BCAS3 and the BED feature all shown. Found and documented a layout quirk: in BED-only views, `Refseq All` fills the panel and hides the BEDs.
+- **Key paths:** ~/igv/genomes/hg38.json (backup: hg38.json.bak_20260925_dead_s3); /data1/greenbab/users/ahunos/apps/llm_configs/claude/rules/igv.md
+- **Commands that worked:** `curl -sf https://igv.org/genomes/json/hg38.json -o ~/igv/genomes/hg38.json`
+- **Known issues / blockers:** none
+- **Exact next steps:** see "Exact next steps" above.
 
 ### 2026-09-25 16:08 · Claude Code · 1.2.2 released: refreshed bundled genome JSONs
 - **Done:** Committed the 5 refreshed `docker/json` genome files, bumped to 1.2.2 (so CI doesn't overwrite the `:1.2.1` tag), and added a README note on stale cached JSONs. Pushed 603f062; CI run 36183304542 succeeded (1m34s) and published `:latest`, `:1.2.2` and `:603f062`. Pulled the SIF and confirmed the bundled mouse JSON uses igv.org. Test render of `chr13:9830023-9840665` (R-0-1 BAM, mm10): exit 0 in 27 s. Pointed `igver_latest.sif` at the new SIF. Kept `igver_1.2.1_igv2.19.8.sif` in place because RetroEM `03_igv_top_loci.sbatch` names it.
