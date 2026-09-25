@@ -8,7 +8,7 @@ import yaml
 # Add package root to sys.path when running as a script
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from igver import __version__, load_screenshots
-from igver.igver import parse_igv_prefs
+from igver.igver import find_missing_indexes, parse_igv_prefs, _is_url
 
 try:
     from importlib import resources  # Python 3.9+
@@ -239,9 +239,16 @@ def main():
     # Ensure paths exist
     os.makedirs(args.output, exist_ok=True)
     for path in input_paths:
-        if not os.path.exists(path):
+        if not _is_url(path) and not os.path.exists(path):
             print(f'[ERROR] {path} does not exist.', file=sys.stderr)
             sys.exit(1)
+
+    # A missing index makes IGV block on a dialog until --stall-timeout; fail now instead
+    missing_indexes = find_missing_indexes(input_paths)
+    if missing_indexes:
+        print("[ERROR] Missing track index(es); IGV would hang on an error dialog:\n  "
+              + "\n  ".join(missing_indexes), file=sys.stderr)
+        sys.exit(1)
 
     genome_map = _load_genome_mappings()
     genome = genome_map.get(args.genome, args.genome) # convert e.g. GRCh38 -> hg38

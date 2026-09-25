@@ -492,3 +492,7 @@ Phase C
 - 2026-09-25 · B6 · Same filename + same locus → rendered once with one warning; same filename + different
   locus is reachable (a text `chr1:100-200 x` and a BED `chr1 100 200 x`: the BED filename keeps its 0-based
   start), so it raises `ValueError` naming the file instead of asserting.
+- 2026-09-25 · B1/B3 · IGV logs nothing for some dialog-blocking errors (404 track URL: the log ends at
+  `Loading resource: <url>`). When a run's log has no SEVERE/ERROR lines, the excerpt shows its last 5
+  lines instead. E3c/E11f grep for that line; a `SEVERE` grep had only matched an unrelated, intermittent
+  `ClassFormatError ... XSystemTrayPeer` line.

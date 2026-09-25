@@ -589,6 +589,61 @@ def _is_url(path):
     return re.match(r'^[A-Za-z][A-Za-z0-9+.-]*://', path) is not None
 
 
+# data extension -> (accepted index names as suffix templates, command that creates one).
+# '{f}' is the path as given, '{stem}' the path without its extension.
+INDEX_RULES = (
+    ('.bam', ('{f}.bai', '{stem}.bai', '{f}.csi'), 'samtools index {f}'),
+    ('.cram', ('{f}.crai', '{stem}.crai'), 'samtools index {f}'),
+    ('.vcf.gz', ('{f}.tbi', '{f}.csi'), 'tabix -p vcf {f}'),
+    ('.bcf', ('{f}.csi',), 'bcftools index {f}'),
+)
+
+
+def find_missing_indexes(paths):
+    """
+    Pre-flight check: list every local BAM/CRAM/VCF.gz/BCF track whose index is missing.
+
+    IGV blocks forever on an error dialog when an index is missing, so this runs before IGV.
+    Indexes are looked up next to the path as given, not its realpath, because IGV does the same:
+    a symlinked BAM needs its index beside the link. URL tracks and other types are skipped.
+
+    Parameters:
+        paths (list of str): Track paths.
+
+    Returns:
+        list of str: One message per track without an index (empty when all are fine).
+
+    Example:
+        >>> find_missing_indexes(['/data/x.bam'])  # no /data/x.bam.bai, /data/x.bai or /data/x.bam.csi
+        ['/data/x.bam: no index (looked for /data/x.bam.bai, /data/x.bai, /data/x.bam.csi). Create one: samtools index /data/x.bam']
+    """
+    problems = []
+    for path in paths:
+        if _is_url(path):
+            continue
+        for ext, templates, fix in INDEX_RULES:
+            if not path.lower().endswith(ext):
+                continue
+            f, stem = path, path[:-len(ext)]
+            candidates = [t.format(f=f, stem=stem) for t in templates]
+            if any(os.path.exists(c) for c in candidates):
+                break
+            msg = (f"{path}: no index (looked for {', '.join(candidates)}). "
+                   f"Create one: {fix.format(f=shlex.quote(path))}")
+            real = os.path.realpath(path)
+            if real != os.path.abspath(path):
+                real_stem = real[:-len(ext)] if real.lower().endswith(ext) else real
+                beside_target = [t.format(f=real, stem=real_stem) for t in templates]
+                found = [c for c in beside_target if os.path.exists(c)]
+                if found:
+                    link = candidates[beside_target.index(found[0])]  # same naming, beside the link
+                    msg = (f"{path} is a symlink to {real}; its index {found[0]} sits beside the target, "
+                           f"but IGV looks beside the link. Fix: ln -s {shlex.quote(found[0])} {shlex.quote(link)}")
+            problems.append(msg)
+            break
+    return problems
+
+
 def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max_panel_height=200,
                         overlap_display='squish', igv_config=None, color_by=None, output_format='png'):
     """
@@ -897,12 +952,15 @@ def _igv_log_excerpt(run_dir, n_lines=20):
     """
     Return the last `n_lines` SEVERE/ERROR lines of a run directory's IGV log.
 
+    Some errors that block IGV on a dialog (e.g. a 404 track URL) are never logged; then the
+    last 5 log lines are returned instead, which name the resource IGV was loading when it stopped.
+
     Parameters:
         run_dir (str): IGV directory of the run.
         n_lines (int, optional): Maximum number of lines (default: 20).
 
     Returns:
-        str: The lines joined by newlines, or a note that the log is missing or has no errors.
+        str: The lines joined by newlines, or a note that the log is missing.
 
     Example:
         >>> _igv_log_excerpt('/tmp/igver_igv_x')
@@ -912,8 +970,11 @@ def _igv_log_excerpt(run_dir, n_lines=20):
     if not os.path.exists(log):
         return f'(no IGV log at {log})'
     with open(log, errors='replace') as f:
-        hits = [line.rstrip() for line in f if line.startswith(('SEVERE', 'ERROR'))]
-    return '\n'.join(hits[-n_lines:]) if hits else f'(no SEVERE/ERROR lines in {log})'
+        lines = [line.rstrip() for line in f if line.strip() and not line.startswith((' ', '\t'))]
+    hits = [line for line in lines if line.startswith(('SEVERE', 'ERROR'))]
+    if hits:
+        return '\n'.join(hits[-n_lines:])
+    return f'(no SEVERE/ERROR lines in {log}; its last lines are:)\n' + '\n'.join(lines[-5:])
 
 
 def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False, 

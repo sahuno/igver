@@ -21,7 +21,7 @@ E2b	both	-i {BAM} -r {FIX}/e2b_bedlike.txt --stall-timeout 60	0	8-32534766-32536
 E2c	both	-i {BAM} -r {FIX}/e2c_bad.txt --stall-timeout 60	1	-	5	grep:e2c_bad.txt:2;tmp_clean	B2: bad line exits before IGV
 E3a	both	-i {FIX}/e3a/test_tumor_link.bam -r 8:32534767-32536767 --stall-timeout 60	1	-	5	grep:test_tumor_link.bam.bai;grep:ln -s;tmp_clean	B3: symlinked BAM without index beside the link
 E3b	both	-i {SETUP}/test_tumor.bam -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120	setup:stale_index	B3: index older than BAM (probe 2026-09-25: IGV renders, no dialog)
-E3c	both	-i https://igv.org/does/not/exist/x.bam -r 8:32534767-32536767 --stall-timeout 30	1	-	150	grep:SEVERE;grep:igver_igv_	B3: forced stall (404 URL track: IGV blocks on a dialog, probe 2026-09-25) prints the IGV log excerpt and the kept run dir
+E3c	both	-i https://igv.org/does/not/exist/x.bam -r 8:32534767-32536767 --stall-timeout 30	1	-	150	grep:Loading resource:\s+https://igv.org/does/not/exist/x.bam;grep:IGV directory kept at \S*igver_igv_	B3: forced stall (404 URL track: IGV blocks on a dialog and logs no error, probe 2026-09-25) prints the IGV log excerpt and the kept run dir
 E4a	both	-i {BAM} -r {FIX}/e4a_space.hg19.bed --stall-timeout 60	0	8-32534766-32536767.my_region.png	120		B4: BED name with a space
 E4b	both	-i {BAM} -r {FIX}/e4b_slash.hg19.bed --stall-timeout 60	0	8-32534766-32536767.LINE_L1.png	120		B4: BED name with a slash
 E4c	both	-i "{FIX}/with space/test_tumor.bam" -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120		B4: track path with a space (probe: IGV accepts double-quoted batch arguments)
@@ -32,7 +32,7 @@ E7	both	-i {FIX}/e7_tracks.txt {FIX}/e7_genes.hg19.bed -r 8:32534767-32536767 --
 E8	both	-i ../../test_tumor.bam -r 8:32534767-32536767 -g grch37.fa --debug --stall-timeout 60	0	8-32534767-32536767.png	150	grep:Loading genome:\s*/\S*/grch37.fa;count:Loading genome:=1;visual	B8: relative FASTA (symlink into /data1/greenbab/database), no manual binds
 E9	both	-i {BAM} -r {FIX}/e9_space.hg19.bed --stall-timeout 60	0	8-32534766-32536767.spaced.png	120	grep:whitespace	B9: space-separated BED
 E11	both	-i {BAM} -r 8:32534767-32536767 19:11137898-11139898 -j 2 --debug --stall-timeout 60	0	8-32534767-32536767.png;19-11137898-11139898.png	150	rundirs:2;nogrep:BindException	B11: two jobs, two IGV dirs, no port clash
-E11f	both	-i https://igv.org/does/not/exist/x.bam -r 8:32534767-32536767 19:11137898-11139898 -j 2 --stall-timeout 30	1	-	150	rundirs:2;grep:SEVERE	B11: forced failure; each chunk names its own kept run dir
+E11f	both	-i https://igv.org/does/not/exist/x.bam -r 8:32534767-32536767 19:11137898-11139898 -j 2 --stall-timeout 30	1	-	150	rundirs:2;grep:\[1\].*\n?.*IGV directory kept at;grep:\[2\] ;grep:Loading resource:\s+https://igv.org/does/not/exist/x.bam	B11: forced failure; each chunk names its own kept run dir
 R1	both	-i {HG38_BAM} {FIX}/r1_cftr.hg38.bed -r chr7:117540000-117560000 -g hg38 --stall-timeout 60	0	chr7-117540000-117560000.png	150	visual	regression 1.2.3: default -d squish keeps the BED track visible
 R2	both	-i {MM10_BAM} -r chr13:9830023-9840665 -g mm10 --stall-timeout 60	0	chr13-9830023-9840665.png	150		regression: mm10 genome JSON loads
 R3	both	-i {BAM} -r 8:32534767-32536767 --methylation --debug --stall-timeout 60	0	8-32534767-32536767.png	120	grep:colorBy BASE_MODIFICATION	regression: --methylation injects colorBy (batch printed by --debug)
