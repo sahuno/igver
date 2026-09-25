@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: Decide whether to commit the refreshed docker/json genome files (uncommitted) and rebuild the image
+next_action: Refresh the stale cached ~/igv/genomes human JSON (dead fastaURL) if the user agrees
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -17,8 +17,8 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Exact next steps
 
-1. Decide on the uncommitted `docker/json/{hg19,hg38,mm10,mm39,rn6}.json` refresh: commit and push (triggers an image rebuild) or discard with `git checkout docker/json`. It's unproven whether IGV ever reads these bundled files; the user's run read `~/igv/genomes/` instead.
-2. Refresh the user's cached `~/igv/genomes/hg38.json`: its fastaURL (igv-genepattern-org S3) returns 403, the same failure as mm10.
+1. Refresh the user's cached `~/igv/genomes/hg38.json`: its fastaURL (igv-genepattern-org S3) returns 403, the same failure as mm10.
+2. When the RetroEM `03_igv_top_loci.sbatch` no longer names `igver_1.2.1_igv2.19.8.sif`, move that SIF to `images/archived/`
 3. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
 
 ## Open unknowns
@@ -34,6 +34,13 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 16:08 · Claude Code · 1.2.2 released: refreshed bundled genome JSONs
+- **Done:** Committed the 5 refreshed `docker/json` genome files, bumped to 1.2.2 (so CI doesn't overwrite the `:1.2.1` tag), and added a README note on stale cached JSONs. Pushed 603f062; CI run 36183304542 succeeded (1m34s) and published `:latest`, `:1.2.2` and `:603f062`. Pulled the SIF and confirmed the bundled mouse JSON uses igv.org. Test render of `chr13:9830023-9840665` (R-0-1 BAM, mm10): exit 0 in 27 s. Pointed `igver_latest.sif` at the new SIF. Kept `igver_1.2.1_igv2.19.8.sif` in place because RetroEM `03_igv_top_loci.sbatch` names it.
+- **Key paths:** /data1/greenbab/software/images/igver_1.2.2_igv2.19.8.sif; igver_latest.sif -> igver_1.2.2_igv2.19.8.sif
+- **Commands that worked:** `apptainer pull /data1/greenbab/software/images/igver_1.2.2_igv2.19.8.sif docker://sahuno/igver:1.2.2`; `ln -sfn igver_1.2.2_igv2.19.8.sif igver_latest.sif`
+- **Known issues / blockers:** The validate-reference-genome hook blocks any Bash command that mentions both a mouse and a human build, so edit multi-genome text with the file editor or keep the names out of the command.
+- **Exact next steps:** see "Exact next steps" above.
 
 ### 2026-09-25 16:00 · Claude Code · mm10 screenshots hung: stale cached genome JSON, fixed
 - **Done:** RetroEM job 14908700 (`results/20260925_mm10_L1_e2e/03_igv_top_loci.sbatch`) produced 0 PNGs. `jstack` showed both JVMs blocked on `JOptionPane`, and the log ended at `Loading genome: ~/igv/genomes/mm10.json`. The cached JSON (Aug 2024) pointed at `s3.amazonaws.com/igv.broadinstitute.org`, which now returns 403. Cancelled the job, backed up the JSON and replaced it with https://igv.org/genomes/json/mm10.json. A one-region test took 27 s; resubmitted job 14910024 wrote all 8 PNGs in ~26 s. Audited all 29 bundled `docker/json/*.json`: hg19, hg38, mm10, mm39 and rn6 have dead URLs (403/404). Replaced them in the working tree with the current igv.org versions, all URLs 200/206. **Not committed.** Added a "Stale cached genome JSON" section to the IGV rules file.
