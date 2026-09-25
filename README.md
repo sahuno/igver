@@ -6,6 +6,10 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 > The methylation, parallel-rendering and PDF features documented below live in this fork.
 > PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
+**New in 1.2.2 (this fork):**
+- Refreshed the bundled genome definitions for hg19, hg38, mm10, mm39 and rn6 from igv.org; their sequence/annotation URLs pointed at retired S3 buckets (HTTP 403/404), which makes IGV hang on an error dialog in headless mode
+- If screenshots hang right after `Loading genome: ~/igv/genomes/<genome>.json`, your *cached* copy is stale: `curl -sf https://igv.org/genomes/json/<genome>.json -o ~/igv/genomes/<genome>.json`
+
 **New in 1.2.1 (this fork):**
 - IGV 2.19.8 in the container (from 2.19.5); `/opt/IGV_2.19.5` is kept as a symlink so igver ≤ 1.2.0 still works against `:latest`
 
@@ -25,6 +29,7 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 
 **Container versions:**
 - `sahuno/igver:latest` — most recent (recommended)
+- `sahuno/igver:1.2.2` — igver 1.2.2 with IGV 2.19.8 and refreshed genome definitions
 - `sahuno/igver:1.2.1` — igver 1.2.1 with IGV 2.19.8
 - `sahuno/igver:1.2.0` — igver 1.2.0 with IGV 2.19.5
 
