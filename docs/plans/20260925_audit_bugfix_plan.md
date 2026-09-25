@@ -73,9 +73,14 @@ pointing at retired S3 buckets) made mm10 runs hang on 2026-09-25.
   `igver/data/igv_prefs.properties` (packaged via `package_data`). Template contents must be explicit
   and documented. Minimum: `IGV.Bounds` (fixed width/height, pick and document), `PORT_ENABLED=false`
   (avoids the port-60151 clash under `-j`), `SAM.DOWNSAMPLE_READS=true` (IGV default; say so),
-  `SAM.SHOW_SOFT_CLIPPED=false`, and a fixed `DEFAULT_GENOME_KEY` that does not trigger extra downloads
-  (verify which value avoids loading a second genome at startup; the logs show an hg38 load before the
-  requested genome today).
+  `SAM.SHOW_SOFT_CLIPPED=false`. `IGV.Bounds` defaults to the current de-facto `0,0,1150,800` so
+  existing lab figures keep their 1150-px width; choosing a different size is the user's decision
+  (record it as an open unknown, do not pick one).
+- Avoid the extra default-genome load (today IGV loads hg38 first, then the requested genome, and
+  fetches an hg38 RefSeq index that 404s): pass `-g <genome>` on the IGV command line in addition to
+  the batch `genome` line. Confirm with the `Loading genome:` lines in the run's IGV log (exactly one,
+  for the requested genome). If `-g` does not achieve it, try `DEFAULT_GENOME_KEY=<genome>` in the
+  generated prefs and record which worked.
 - New CLI option `--igv-prefs FILE`: extra `KEY=VALUE` lines appended after the template (user
   override, explicit and reproducible). Reject lines that are not `KEY=VALUE`.
 - On success delete the run directory. On failure keep it and print its path plus the last 20
@@ -109,7 +114,10 @@ exit 0. Multi-word tags keep only the last word.
 
 **Design.** Define and document the grammar (README + docstring):
 - A line is whitespace-split into tokens. **Leading** tokens that fully match the locus regex
-  `^[^\s:]+:[0-9,]+-[0-9,]+$` are loci (one or more; several = IGV split view, intended for SVs).
+  `^(.+):([0-9][0-9,]*)-([0-9][0-9,]*)$` (contig = everything before the **last** colon, so hg38 alt
+  contigs such as `HLA-A*01:01:01:01` in `Homo_sapiens_assembly38.fasta` are valid) are loci (one or
+  more; several = IGV split view, intended for SVs). The "leading tokens only" rule is what stops
+  locus-shaped tags from being read as loci.
   Everything after the first non-locus token is the tag, joined with `_`.
 - start ≤ end required (after removing commas); otherwise error with file:line.
 - A line with zero leading loci: if it is BED-like (≥3 fields, fields 2–3 integers) parse it as a
@@ -122,7 +130,8 @@ exit 0. Multi-word tags keep only the last word.
       multi-word tag preserved (`my_tag_here`); `chr1 100 200 regionA` in `.txt` parses as a BED
       region; `TP53` alone errors with line number; `chr1:200-100` errors; comma coordinates work;
       two leading loci + tag → split view + tag (legacy SV format still works: the existing
-      `test/regions.txt` style); tag containing `:` and `-` in non-leading position stays a tag.
+      `test/regions.txt` style); tag containing `:` and `-` in non-leading position stays a tag;
+      `HLA-A*01:01:01:01:1-100` parses as one valid locus with contig `HLA-A*01:01:01:01`.
 - [ ] No code path can produce `goto ` with an empty argument (property test: fuzz 1,000 random
       lines through the parser — each either raises `ValueError` with a line number or yields
       non-empty loci; use `random.Random(42)`).
@@ -137,14 +146,18 @@ fails with a message that does not mention the index.
 **Design.** Pre-flight check in `cli.py` before IGV starts, for local (non-URL) tracks:
 `.bam` needs `<f>.bai`, `<stem>.bai` or `<f>.csi`; `.cram` needs `<f>.crai` or `<stem>.crai`;
 `.vcf.gz`/`.bcf` need `.tbi` or `.csi`. Missing → exit 1 listing every missing index and the command
-to create it (`samtools index`, `tabix -p vcf`). Also investigate: **index older than data file** —
+to create it (`samtools index`, `tabix -p vcf`). **Look next to the path as given, not its
+realpath**: IGV does the same. The 2026-09-25 probe used a symlinked BAM whose target had a `.bai`,
+and IGV still hung. If the index exists only beside the realpath, say so in the error and suggest
+symlinking the index next to the link. Also investigate: **index older than data file** —
 make a temp copy of `test/test_tumor.bam` + index, `touch` the BAM so it is newer, run IGV and see
 whether IGV raises a (hanging) dialog. If it does: warn (not error) in pre-flight and document. Record
 the finding either way.
 Add to the stall message: the tail of the run's IGV log (from B1).
 
 **Done when.**
-- [ ] Unit tests for each index naming convention (positive: each accepted name; negative: none present).
+- [ ] Unit tests for each index naming convention (positive: each accepted name; negative: none
+      present; symlinked BAM whose index sits only beside the target → error that mentions the target's index).
 - [ ] E2E E3a: BAM symlink without index exits 1 in < 5 s, message names the missing index path, no
       IGV process started (no `igver_igv_*` run dir created).
 - [ ] E3b (index-older investigation) result recorded in PROGRESS with evidence; behaviour matches the finding.
@@ -213,9 +226,12 @@ the realpath's directory) to the Singularity binds. For FASTA, require an index 
 also `.gzi`); missing → exit 1 before IGV starts.
 **Done when.**
 - [ ] Unit: relative FASTA → absolute path in batch; bind list contains its directory; missing `.fai` → error.
-- [ ] E2E E8: a small FASTA (extract `chr8:32530000-32540000` with `samtools faidx` from the hg19
-      reference in the lab config into `test/data/`, rename the contig to `8`, index it) passed as a
-      relative `-g` renders the test BAM region in host-wrapper mode without manual `--singularity-args`.
+- [ ] E2E E8: create symlinks `test/e2e/fixtures/grch37.fa -> /data1/greenbab/database/human_GRCh37/GRCh37-lite.fa`
+      and `grch37.fa.fai -> .../GRCh37-lite.fa.fai` (both exist; contigs have no `chr`, matching
+      `test/test_tumor.bam`). Passing `-g grch37.fa` as a **relative** path from `test/e2e/fixtures/`
+      renders `8:32534767-32536767` in host-wrapper mode with no manual `--singularity-args`. Because
+      the FASTA is a symlink into `/data1/greenbab/database`, this also exercises the realpath bind.
+      (Do not use a sliced FASTA: renaming a slice's contig shifts coordinates off the reads.)
 
 ### B9 (S3, code) — A space-separated BED silently yields zero regions
 **Design.** In `_parse_bed_file`: split on tabs; if a non-header line has < 3 tab fields but ≥ 3
@@ -235,7 +251,8 @@ built later (release event, `workflow_dispatch`) can contain newer code than its
 docker/Dockerfile`), `COPY` the package (`setup.py`, `igver/`, `requirements.txt`, `README.md`) into
 `/opt/igver`, install from that copy, keep the `/opt/igver/igver.py` compatibility wrapper, fix the
 `ADD json/...` paths for the new context, and add a `.dockerignore` (exclude `.git`, `test/`, `docs/`,
-BAMs, `igver_agent/`, `igver-mcp/`). Record the commit SHA in the image (build-arg `GIT_SHA` →
+`*.bam`/`*.bai`/`*.cram`, `igver_agent/`, `igver-mcp/`, `igver_final_test/`, `CLAUDE/`, `.claude/`,
+and any hidden scratch directories). Record the commit SHA in the image (build-arg `GIT_SHA` →
 `LABEL org.opencontainers.image.revision` and `/opt/igver/BUILD_SHA`).
 **Done when.**
 - [ ] CI run for the merge commit is green.
@@ -276,18 +293,25 @@ Filenames keep the original BED coordinates (downstream scripts match on them); 
   at `chr17:61268000-61282000` (BCAS3). Reference paths: `/data1/greenbab/users/ahunos/apps/llm_configs/claude/profiles/databases/databases_config.yaml`.
 
 ### 3.2 Running IGV (compute)
-- IGV must not run on the login node. Check `echo $SLURM_JOB_ID`: if set, `srun` creates a step
-  inside that allocation (use `srun -n1 -c1 --mem=8G -t 00:30:00 <script>`; `-c 2` is refused);
-  otherwise use `srun -p cpushort --exclude=isca071 -n1 -c1 --mem=8G -t 00:30:00 <script>`, or
-  `sbatch` for long e2e runs.
+- IGV must not run on the login node. For single quick checks: if `$SLURM_JOB_ID` is set, `srun`
+  creates a step inside that (possibly interactive) allocation (`srun -n1 -c1 --mem=8G -t 00:30:00
+  <script>`; `-c 2` is refused there); otherwise `srun -p cpushort --exclude=isca071 -n1 -c1
+  --mem=8G -t 00:30:00 <script>`.
+- **Full e2e runs: always `sbatch`, one job per run mode**, to `cpushort` (2 h wall limit) with
+  `--exclude=isca071 -c 2 --mem=16G -t 01:30:00` and a log under `test/e2e/logs/`. Never run the
+  full suite as a step of an interactive allocation: the step dies when that session ends. If one
+  mode needs more than 1.5 h, split the cases across two jobs.
 - Two run modes must both be tested:
   - **Host-wrapper mode** (new code writes the batch, IGV runs in the image):
     `/home/ahunos/miniforge3/envs/igver/bin/igver ... --singularity-image <sif>` with
     `PATH=/home/ahunos/miniforge3/envs/snakemake/bin:$PATH` so `singularity` resolves.
   - **In-image mode** with the working tree mounted over the image's copy:
     `apptainer exec --bind /data1/greenbab --bind <repo>:/opt/igver <sif> igver ... --no-singularity`.
-    Check that `igver --version` inside prints the working-tree version; if the editable install in
-    the image does not pick up the bind, use `python -m igver.cli` with `PYTHONPATH=/opt/igver`.
+    **Do not use `igver --version` to verify the bind**: it reads package metadata from the image's
+    site-packages and keeps printing the image's version even when the bind works. The real check:
+    `apptainer exec --bind <repo>:/opt/igver <sif> sha1sum /opt/igver/igver/igver.py` must equal
+    `sha1sum <repo>/igver/igver.py`, and `apptainer exec ... python -c "import igver; print(igver.__file__)"`
+    must print a path under `/opt/igver/`.
 - Use short `--stall-timeout` (30–60 s) in error-path cases so a hang costs about 2 minutes, not 20.
 - IGV needs outbound HTTPS (genome JSONs, RefSeq from UCSC).
 
@@ -308,8 +332,12 @@ Build `test/e2e/fixtures/poisoned_igv/` with `prefs.properties` (`IGV.Bounds=0,0
 `genomes/hg19.json` copied from IGV's current definitions but with every URL replaced by
 `https://s3.amazonaws.com/igv.broadinstitute.org/...` (returns 403). Overlay it on the real home
 folder only inside the container: `apptainer exec --bind <fixture>:/home/ahunos/igv ...`
-(in-image mode). For host-wrapper mode, pass the same bind in `--singularity-args`. The real
-`~/igv` is never touched; E1c verifies that.
+(in-image mode). For host-wrapper mode, pass the same bind in `--singularity-args`. Note that
+igver's default `--singularity-args` is `-B /home`: verify that Apptainer honours a sub-path bind
+(`fixture:/home/ahunos/igv`) on top of an already-bound `/home` by listing
+`/home/ahunos/igv/prefs.properties` inside the container. If it does not, pass `--singularity-args`
+**without** `-B /home` for these cases (bind `/data1/greenbab` plus the fixture) rather than calling
+E1a untestable. The real `~/igv` is never touched; E1c verifies that.
 
 ---
 
@@ -317,13 +345,17 @@ folder only inside the container: `apptainer exec --bind <fixture>:/home/ahunos/
 
 ### 4.1 Unit acceptance tests
 Create `test/test_audit_1_3_0.py` (header: author Samuel Ahuno, date, one-line purpose) with one test
-class per bug (B1–B12), covering every unit bullet in §2 — both **positive** cases (input that must
+class per bug (B1–B12). **Structure rule:** the module must collect on the unfixed code. Import
+only symbols that exist today at module top; import new symbols (e.g. a sanitiser, a prefs loader)
+*inside* the test functions that use them, so a missing name fails that test alone instead of
+breaking collection of the whole file. `pytest.importorskip` is not allowed (it skips). "Fails on
+the unfixed code" includes `ImportError`/`AttributeError`/`SystemExit`, not only `AssertionError`.
+Cover covering every unit bullet in §2 — both **positive** cases (input that must
 work) and **negative/adversarial** cases (input that must be rejected, or must not be misread).
 Adversarial inputs to include at minimum:
 - Region text lines: `chr1:1-2 chr1:1-2.L1.1.+`; `chr1:1-2\tmy tag here`; `chr1\t100\t200\tx`;
   `TP53`; `chr1:200-100`; `chr1:1,000-2,000`; empty tag; a line with only whitespace; a CRLF line
-  ending; a tab-only separator; `chrUn_JH584304:1-100`; `HLA-A*01:01:01:01:1-100` (must not be
-  mis-split: either a valid locus or a clear error, never a silent split view).
+  ending; a tab-only separator; `chrUn_JH584304:1-100`; `HLA-A*01:01:01:01:1-100` (one valid locus).
 - BED: name with a space, `/`, `|`, `:`, leading `.`, 300 characters, unicode; space-separated
   lines; `track`/`browser`/`#chr` header lines; `.BED`; `.bed.gz`; empty file; non-integer coordinates.
 - Tracks: BAM with `.bam.bai`, with `.bai`, with `.csi`, with none; CRAM with/without `.crai`;
@@ -357,6 +389,8 @@ Add `test/e2e/out/` and `test/e2e/logs/` to `.gitignore`. Run the harness on the
 `/home/ahunos/miniforge3/envs/igver/bin/python -m pytest test/ --ignore=test/archive --ignore=test/test_cli.py -q -p no:cacheprovider`
 → **88 passed, 1 skipped** on commit `062cedc` (2026-09-25). This must never regress except for
 tests whose old expectation was the bug itself (B12 `goto` coordinates); list each such change.
+`test/test_cli.py` is **out of scope**: it pins upstream's `docker://quay.io/soymintc/igver` image
+and needs `singularity` on PATH. Do not fix it and do not count it as a regression.
 
 ---
 
