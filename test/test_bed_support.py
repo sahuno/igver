@@ -74,10 +74,10 @@ chr7\t127473530\t127474697\tPos3\t0\t+
         # Check first region
         assert png_paths[0].endswith("chr1-100000-200000.png")
         
-        # Check batch content
-        assert "goto chr1:100000-200000" in region_content
-        assert "goto chr2:300000-400000" in region_content
-        assert "goto chr3:500000-600000" in region_content
+        # Check batch content: BED starts are 0-based, IGV's goto is 1-based (igver 1.3.0, B12)
+        assert "goto chr1:100001-200000" in region_content
+        assert "goto chr2:300001-400000" in region_content
+        assert "goto chr3:500001-600000" in region_content
     
     def test_parse_bed6_file(self, sample_bed6_file, temp_dir):
         """Test parsing of BED6 format with names"""
@@ -143,10 +143,9 @@ chr7\t127473530\t127474697\tPos3\t0\t+
         with open(bed_path, 'w') as f:
             f.write("")
         
-        png_paths, region_content = igver._parse_bed_file(bed_path, temp_dir)
-        
-        assert len(png_paths) == 0
-        assert len(region_content) == 0
+        # A BED without regions is an error naming the file (igver 1.3.0, B9), not zero snapshots
+        with pytest.raises(ValueError, match="no regions found"):
+            igver._parse_bed_file(bed_path, temp_dir)
     
     def test_malformed_bed_file(self, temp_dir):
         """Test handling of malformed BED file"""
@@ -158,11 +157,9 @@ incomplete line
         with open(bed_path, 'w') as f:
             f.write(bed_content)
         
-        png_paths, region_content = igver._parse_bed_file(bed_path, temp_dir)
-        
-        # Should only parse the valid line
-        assert len(png_paths) == 1
-        assert png_paths[0].endswith("chr2-300000-400000.extra.png")
+        # An unparseable line is an error with file:line (igver 1.3.0, B9); it was skipped silently
+        with pytest.raises(ValueError, match=r"malformed\.bed:1:"):
+            igver._parse_bed_file(bed_path, temp_dir)
 
 
 class TestGetPathsAndRegions:

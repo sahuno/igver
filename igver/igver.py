@@ -1,4 +1,6 @@
+import gzip
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -209,127 +211,310 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
     return _get_figures(output_paths, remove_png, dpi, debug)
 
 
-def _parse_bed_file(bed_file, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
+# Locus grammar: the contig is everything before the LAST colon, so hg38 alt contigs such as
+# HLA-A*01:01:01:01 stay one contig; coordinates may contain thousands separators.
+LOCUS_RE = re.compile(r'^(.+):([0-9][0-9,]*)-([0-9][0-9,]*)$')
+UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._+=,-]')
+MAX_FILENAME_BYTES = 200
+
+
+def parse_locus(token):
     """
-    Parse BED format file (BED3 or BED6) to extract regions
-    BED3: chrom, chromStart, chromEnd
-    BED6: chrom, chromStart, chromEnd, name, score, strand
+    Parse one 'contig:start-end' token.
+
+    Parameters:
+        token (str): A whitespace-free token.
+
+    Returns:
+        tuple or None: (contig, start, end) with integer coordinates (commas removed), or None if
+            the token is not a locus. start > end is returned as is; callers reject it.
+
+    Example:
+        >>> parse_locus('HLA-A*01:01:01:01:1-100')
+        ('HLA-A*01:01:01:01', 1, 100)
+        >>> parse_locus('chr1:1-2.L1.1.+') is None
+        True
     """
-    png_paths = []
-    region_content = []
-    
-    with open(bed_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#') or line.startswith('track') or line.startswith('browser'):
+    m = LOCUS_RE.match(token)
+    if not m:
+        return None
+    return m.group(1), int(m.group(2).replace(',', '')), int(m.group(3).replace(',', ''))
+
+
+def sanitize_name(name):
+    """
+    Make a user-derived string safe as part of a snapshot filename.
+
+    Every character outside [A-Za-z0-9._+=,-] becomes '_' (IGV splits batch arguments on
+    whitespace, '/' would name a missing subdirectory, and ':' '|' are invalid on Windows/OneDrive),
+    runs of '_' collapse to one, and leading '.'/'_' are removed (no hidden files). Idempotent.
+
+    Parameters:
+        name (str): BED name, region-file tag or tag argument.
+
+    Returns:
+        str: The sanitised name (may be empty).
+
+    Example:
+        >>> sanitize_name('chr1:1-2.L1|3.-')
+        'chr1_1-2.L1_3.-'
+    """
+    name = UNSAFE_FILENAME_CHARS.sub('_', name)
+    name = re.sub(r'_+', '_', name)
+    return name.lstrip('._')
+
+
+def _snapshot_filename(region_tags, tag, ext):
+    """
+    Build a snapshot filename '<region>[.<region>...][.<tag>].<ext>' of at most 200 bytes.
+
+    Parameters:
+        region_tags (list of str): One 'contig-start-end' string per locus (or a feature name).
+        tag (str): Optional label; sanitised, and truncated first when the name is too long.
+        ext (str): Extension without the dot.
+
+    Returns:
+        str: The filename.
+
+    Example:
+        >>> _snapshot_filename(['chr1-100-200'], 'my region', 'png')
+        'chr1-100-200.my_region.png'
+    """
+    region = '.'.join(sanitize_name(t) for t in region_tags)
+    tag = sanitize_name(tag or '')
+    budget = MAX_FILENAME_BYTES - len(region) - len(ext) - 2
+    if tag and budget > 0:
+        region += '.' + tag[:budget]
+    stem_max = MAX_FILENAME_BYTES - len(ext) - 1
+    return f'{region[:stem_max]}.{ext}'
+
+
+def _region_record(goto, region_tags, tag):
+    """A parsed region: the `goto` argument plus the parts of its snapshot filename."""
+    return {'goto': goto, 'region_tags': region_tags, 'tag': tag}
+
+
+def _open_text(path):
+    """Open a text file, transparently gunzipping '*.gz'."""
+    if path.lower().endswith('.gz'):
+        return gzip.open(path, 'rt')
+    return open(path)
+
+
+def _bed_line_record(path, n, fields, tag):
+    """Turn BED fields into a region record; BED is 0-based half-open, IGV's goto is 1-based closed."""
+    chrom, start, end = fields[0].strip(), fields[1].strip(), fields[2].strip()
+    if not (start.isdigit() and end.isdigit()):
+        raise ValueError(f"{path}:{n}: BED start/end must be integers, got '{start}' and '{end}'")
+    start, end = int(start), int(end)
+    if end < start:
+        raise ValueError(f"{path}:{n}: BED end {end} is before start {start}")
+    name = fields[3].strip() if len(fields) > 3 else ''
+    # The filename keeps the BED coordinates (downstream scripts match on them)
+    return _region_record(f'{chrom}:{start + 1}-{max(end, start + 1)}', [f'{chrom}-{start}-{end}'],
+                          name or tag)
+
+
+def _bed_records(bed_file, tag=None):
+    """
+    Parse a BED file (BED3+, optionally gzipped) into region records.
+
+    Tab-separated fields are expected; a line with fewer than 3 tab fields but at least 3
+    whitespace fields is read on whitespace (one warning per file). `#`, `track` and `browser`
+    lines are skipped. Any other unparseable line, or a file without regions, is an error.
+
+    Parameters:
+        bed_file (str): Path to a .bed or .bed.gz file.
+        tag (str, optional): Label for records without a name column (default: None).
+
+    Returns:
+        list of dict: Region records (see _region_record).
+
+    Raises:
+        ValueError: With '<file>:<line>' for a bad line, or '<file>' when it holds no regions.
+
+    Example:
+        >>> _bed_records('r.hg19.bed')[0]['goto']  # file: "chr1<TAB>100<TAB>200"
+        'chr1:101-200'
+    """
+    records, warned = [], False
+    with _open_text(bed_file) as f:
+        for n, raw in enumerate(f, 1):
+            line = raw.rstrip('\r\n')
+            stripped = line.strip()
+            if not stripped or stripped.startswith(('#', 'track', 'browser')):
                 continue
-                
             fields = line.split('\t')
             if len(fields) < 3:
+                fields = stripped.split()
+                if len(fields) < 3:
+                    raise ValueError(f"{bed_file}:{n}: expected at least 3 tab-separated fields "
+                                     f"(chrom, start, end): '{stripped}'")
+                if not warned:
+                    print(f"[WARNING] {bed_file} is whitespace-separated, not tab-separated; "
+                          f"reading it on whitespace (a name with spaces keeps only its first word)")
+                    warned = True
+            records.append(_bed_line_record(bed_file, n, fields, tag))
+    if not records:
+        raise ValueError(f"{bed_file}: no regions found (empty, or only header/comment lines)")
+    return records
+
+
+def _text_records(region_file, tag=None):
+    """
+    Parse a text region file into region records.
+
+    Grammar (per line, whitespace-separated tokens): the LEADING tokens that are loci
+    (contig:start-end) are shown together (several = IGV split view, e.g. for SVs); everything from
+    the first non-locus token on is the tag, joined with '_'. A line without a leading locus is read
+    as BED if it looks like BED (>= 3 fields, fields 2-3 integers; warned once per file), and is
+    an error otherwise. '#' lines and blank lines are skipped.
+
+    Parameters:
+        region_file (str): Path to the text file.
+        tag (str, optional): Label for lines without their own tag (default: None).
+
+    Returns:
+        list of dict: Region records (see _region_record).
+
+    Raises:
+        ValueError: '<file>:<line>: ...' for a line without a locus or with start > end.
+
+    Example:
+        >>> _text_records('sv.txt')[0]  # file: "8:1-2 19:3-4 translocation"
+        {'goto': '8:1-2 19:3-4', 'region_tags': ['8-1-2', '19-3-4'], 'tag': 'translocation'}
+    """
+    records, warned = [], False
+    with _open_text(region_file) as f:
+        for n, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith('#'):
                 continue
-                
-            chrom = fields[0]
-            start = fields[1]
-            end = fields[2]
-            
-            # Handle optional name field from BED6
-            region_name = ''
-            if len(fields) >= 4 and fields[3]:
-                region_name = fields[3]
-            
-            # Format region string
-            region = f"{chrom}:{start}-{end}"
-            region_tag = region.replace(':', '-')
-            
-            # Create filename with appropriate extension
-            ext = 'svg' if output_format in ['svg', 'pdf'] else output_format
-            if region_name:
-                png_fname = f"{region_tag}.{region_name}.{ext}"
-            elif tag:
-                png_fname = f"{region_tag}.{tag}.{ext}"
+            tokens = line.split()
+            loci = []
+            for token in tokens:
+                locus = parse_locus(token)
+                if locus is None:
+                    break
+                loci.append(locus)
+            if loci:
+                for contig, start, end in loci:
+                    if start > end:
+                        raise ValueError(f"{region_file}:{n}: start {start} > end {end} in "
+                                         f"'{contig}:{start}-{end}'")
+                records.append(_region_record(
+                    ' '.join(f'{c}:{s}-{e}' for c, s, e in loci),
+                    [f'{c}-{s}-{e}' for c, s, e in loci],
+                    '_'.join(tokens[len(loci):]) or tag))
+            elif len(tokens) >= 3 and tokens[1].isdigit() and tokens[2].isdigit():
+                if not warned:
+                    print(f"[WARNING] BED-like lines in {region_file} are read as BED (0-based start); "
+                          f"consider a .bed extension")
+                    warned = True
+                # tab fields keep a name with spaces; a stray tab that breaks the columns falls back
+                fields = line.split('\t')
+                if len(fields) < 3 or not (fields[1].strip().isdigit() and fields[2].strip().isdigit()):
+                    fields = tokens
+                records.append(_bed_line_record(region_file, n, fields, tag))
             else:
-                png_fname = f"{region_tag}.{ext}"
-                
-            png_path = os.path.join(output_dir, png_fname)
-            png_paths.append(png_path)
-            
-            # Create batch content
-            region_content.append(f'goto {region}')
-            if overlap_display and overlap_display != 'expand':
-                region_content.append(overlap_display)
-            region_content.append(f'maxPanelHeight {max_panel_height}')
-            if additional_pref:
-                region_content.append(additional_pref)
-            region_content.append(f'snapshot {png_fname}')
-    
-    return png_paths, region_content
+                raise ValueError(f"{region_file}:{n}: line does not start with a chr:start-end locus "
+                                 f"and is not a BED record: '{line}'")
+    return records
 
 
-def _parse_region_file(region_file, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
+def _string_records(region, tag=None):
     """
-    Parse region and tag from line (legacy text format)
+    Turn a -r region argument (not a file) into a region record.
+
+    Parameters:
+        region (str): 'chr:start-end', several loci separated by spaces (split view), or a feature
+            name for IGV's search (e.g. a gene).
+        tag (str, optional): Label appended to the filename (default: None).
+
+    Returns:
+        list of dict: One region record.
+
+    Example:
+        >>> _string_records('chr1:1-100 chr2:5-10')[0]['goto']
+        'chr1:1-100 chr2:5-10'
     """
-    png_paths = []
-    region_content = []
-    for line in open(region_file):
-        if not line.strip() or line.lstrip().startswith('#'):
-            continue
-        out_tag = ''
-        sv_tag = ''
-        field = line.strip().split() # split by either ' ' or '\t'
-        region = []
-        region_tags = []
-        for item in field:
-            is_region = (item.count(':')==1 and item.count('-')==1)
-            if is_region:
-                region_tag = item.replace(':', '-')
-                region_tags.append(region_tag)
-                region.append(item)
-            else:
-                sv_tag = item
-        out_tag = '.'.join(region_tags)
-        region = ' '.join(region)
-        if sv_tag:
-            out_tag += f'.{sv_tag}' # e.g. ins, del, translocation, ...
-        ext = 'svg' if output_format in ['svg', 'pdf'] else output_format
-        png_fname = out_tag + f'.{ext}'
-        png_path = os.path.join(output_dir, png_fname)
-        png_paths.append(png_path)
-        
-        region_content.append(f'goto {region}')
+    tokens = region.split()
+    loci = [parse_locus(t) for t in tokens]
+    if tokens and all(loci):
+        return [_region_record(' '.join(f'{c}:{s}-{e}' for c, s, e in loci),
+                               [f'{c}-{s}-{e}' for c, s, e in loci], tag)]
+    return [_region_record(region, [region.replace(':', '-').replace(' ', '.')], tag)]
+
+
+def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_height=200,
+                      additional_pref=None, output_format='png'):
+    """
+    Turn region records into snapshot paths and batch lines.
+
+    Parameters:
+        records (list of dict): Region records.
+        output_dir (str): Snapshot directory.
+        overlap_display (str): Display commands emitted per region ('' or 'expand' = none).
+        max_panel_height (int): maxPanelHeight per region.
+        additional_pref (str): Extra batch commands before each snapshot.
+        output_format (str): 'png', 'svg' or 'pdf' (pdf is written by IGV as svg).
+
+    Returns:
+        (list of str, list of str): Snapshot paths and batch lines.
+
+    Example:
+        >>> _records_to_batch([_region_record('chr1:1-2', ['chr1-1-2'], None)], '/out')[0]
+        ['/out/chr1-1-2.png']
+    """
+    ext = 'svg' if output_format in ['svg', 'pdf'] else output_format
+    png_paths, region_content = [], []
+    for rec in records:
+        png_fname = _snapshot_filename(rec['region_tags'], rec['tag'], ext)
+        png_paths.append(os.path.join(output_dir, png_fname))
+        region_content.append(f"goto {rec['goto']}")
         if overlap_display and overlap_display != 'expand':
             region_content.append(overlap_display)
         region_content.append(f'maxPanelHeight {max_panel_height}')
         if additional_pref:
             region_content.append(additional_pref)
         region_content.append(f'snapshot {png_fname}')
-
     return png_paths, region_content
+
+
+def _parse_bed_file(bed_file, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
+    """
+    Parse a BED file (BED3/BED6, tab- or whitespace-separated, optionally gzipped) into snapshots.
+
+    BED starts are 0-based: `chr1 100 200` becomes `goto chr1:101-200` with the filename
+    `chr1-100-200[.<name>].png`. The name column (4th field) is sanitised (see sanitize_name).
+
+    Returns:
+        (list of str, list of str): Snapshot paths and batch lines.
+    """
+    return _records_to_batch(_bed_records(bed_file, tag), output_dir, overlap_display,
+                             max_panel_height, additional_pref, output_format)
+
+
+def _parse_region_file(region_file, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
+    """
+    Parse a text region file (see _text_records for the grammar) into snapshots.
+
+    Returns:
+        (list of str, list of str): Snapshot paths and batch lines.
+    """
+    return _records_to_batch(_text_records(region_file, tag), output_dir, overlap_display,
+                             max_panel_height, additional_pref, output_format)
 
 
 def _parse_region_string(region, output_dir, overlap_display='squish', max_panel_height=200, additional_pref=None, tag=None, output_format='png'):
     """
-    Parse region and tag from cli argument
+    Parse a -r region argument (see _string_records) into a snapshot.
+
+    Returns:
+        (list of str, list of str): Snapshot path and batch lines.
     """
-    region_content = []
-    region_tag = region.replace(':', '-').replace(' ', '.')
-    ext = 'svg' if output_format in ['svg', 'pdf'] else output_format
-    png_fname = f"{region_tag}.{ext}"
-    if tag:
-        png_fname = f"{region_tag}.{tag}.{ext}"
-    png_path = os.path.join(output_dir, png_fname)
-    
-    region_content.append(f'goto {region}')
-    if overlap_display and overlap_display != 'expand':
-        region_content.append(overlap_display)
-    region_content.append(f'maxPanelHeight {max_panel_height}')
-    if additional_pref:
-        region_content.append(additional_pref)
-    region_content.append(f'snapshot {png_fname}')
-
-    png_paths = [png_path]
-
-    return png_paths, region_content
+    return _records_to_batch(_string_records(region, tag), output_dir, overlap_display,
+                             max_panel_height, additional_pref, output_format)
 
 
 ALIGNMENT_EXTENSIONS = ('.bam', '.cram', '.sam')
@@ -449,24 +634,34 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     return batch_filename, png_paths
 
 
-def _get_paths_and_regions(regions, **kwargs):
-    png_paths = []
-    region_content = []
-    for region in regions:
-        if os.path.exists(region): # input is region file
-            # Check if it's a BED file based on extension
-            if region.endswith('.bed'):
-                _png_paths, _region_content = _parse_bed_file(region, **kwargs)
-            else:
-                # Assume it's a text file with custom format
-                _png_paths, _region_content = _parse_region_file(region, **kwargs)
+def _get_paths_and_regions(regions, output_dir, tag=None, **kwargs):
+    """
+    Parse every -r argument (BED file, text region file, or region string) into snapshots.
 
-        else: # input is region argument(s)
-            _png_paths, _region_content = _parse_region_string(region, **kwargs)
-        png_paths += _png_paths
-        region_content += _region_content
-    
-    return png_paths, region_content
+    Parameters:
+        regions (list of str): Region arguments, in order.
+        output_dir (str): Snapshot directory.
+        tag (str, optional): Label for regions without their own name/tag (default: None).
+        **kwargs: overlap_display, max_panel_height, additional_pref, output_format
+            (see _records_to_batch).
+
+    Returns:
+        (list of str, list of str): Snapshot paths and batch lines.
+
+    Example:
+        >>> _get_paths_and_regions(['chr1:1-2'], output_dir='/out')[0]
+        ['/out/chr1-1-2.png']
+    """
+    records = []
+    for region in regions:
+        if os.path.isfile(region):
+            if region.lower().endswith(('.bed', '.bed.gz')):
+                records += _bed_records(region, tag)
+            else:
+                records += _text_records(region, tag)
+        else:
+            records += _string_records(region, tag)
+    return _records_to_batch(records, output_dir, **kwargs)
 
 
 def _remove_previous_output(png_paths, debug=False):

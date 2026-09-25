@@ -68,9 +68,10 @@ def test_create_batch_with_bed_file(tmp_path):
     )
 
     content = open(batch_file).read()
-    assert 'goto chr1:1000-2000' in content
-    assert 'goto chr2:3000-4000' in content
-    assert 'goto chrX:5000-6000' in content
+    # BED starts are 0-based, IGV's goto is 1-based (igver 1.3.0, B12); filenames keep BED coordinates
+    assert 'goto chr1:1001-2000' in content
+    assert 'goto chr2:3001-4000' in content
+    assert 'goto chrX:5001-6000' in content
     assert [os.path.basename(p) for p in png_paths] == [
         'chr1-1000-2000.region_A.png',
         'chr2-3000-4000.region_B.png',

@@ -478,3 +478,10 @@ Phase C
 - 2026-09-25 · A2 · E7 and E8 passed on 1.2.3 by file list alone (E8's PNG was silently rendered against the
   personal default genome, every read a mismatch). Both now grep IGV's `Loading resource:`/`Loading genome:`
   lines from `--debug`.
+- 2026-09-25 · B2/B4 · `sanitize_name` and the 200-byte filename cap landed with B2 (the B2 grammar's tag
+  output is defined in sanitised form), before B4's remaining items (path quoting, bind quoting).
+  The sanitiser is also applied to the region part (a no-op for normal contigs; turns `*` in
+  `HLA-A*01:01:01:01` into `_`). Loci are normalised in `goto` and filenames (`chr1:1,000-2,000` →
+  `chr1:1000-2000`, `chr1-1000-2000`), also for `-r` strings. A text-file line without its own tag now falls
+  back to the `tag` argument (1.2.3 ignored it); the CLI has no `--tag`, so only the API sees this.
+- 2026-09-25 · B9/B12 · A zero-length BED interval (`start == end`) becomes a 1-bp `goto start+1-start+1`.
