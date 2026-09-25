@@ -184,20 +184,40 @@ Run tests with: `pytest test/test_cli.py`
    - With tags: `{region_formatted}.{tag}.png` (e.g., `chr1-1000-2000.test.png`)
    - Region formatting: colons become hyphens (`:` → `-`), spaces between regions become dots
    - A BED name column (4th field) is used in place of `tag`
+   - Every name part goes through `sanitize_name()` (chars outside `[A-Za-z0-9._+=,-]` → `_`, no
+     leading `.`), and `_snapshot_filename()` caps the name at 200 bytes (1.3.0)
+   - BED filenames keep the 0-based BED start; the `goto` uses `start+1` (1.3.0, B12)
    - The extension follows `-f/--format`; `-f pdf` makes IGV write `.svg` first, then converts
      with cairosvg and (via the CLI) keeps the `.svg` alongside the `.pdf`
    - Note: When multiple BAMs are loaded together, they appear in the same screenshot
 4. **Genome Aliases**: `-g GRCh38` is mapped to `hg38` before the batch script is written.
    This was broken until 1.2.0 — the loader read a nonexistent `aliases:` YAML key and returned
    `{}`, so every alias reached IGV verbatim. Regression test: `test/test_genome_aliases.py`.
-5. **Auto bind mounts**: `load_screenshots()` appends `-B` for each input track's directory
-   (absolute **and** realpath, so symlinked BAMs work), the output directory, and `$TMPDIR`.
-   Only the reference FASTA and an out-of-tree `--igv-config` still need manual binds.
+5. **Auto bind mounts**: `load_screenshots()` appends `-B` (shlex-quoted) for each local input
+   track's directory (absolute **and** realpath, so symlinked BAMs work), a local `-g` genome file's
+   and its `.fai`/`.gzi` directories (1.3.0), the output directory, and `$TMPDIR`. URL tracks are
+   not bound. Only an out-of-tree `--igv-config` still needs a manual bind.
 6. **Output directory default**: `-o` defaults to `/tmp`, which is then replaced by `$TMPDIR`
    when that variable is set.
 7. **Env overrides**: `IGVER_IMAGE` (container image), `IGVER_IN_CONTAINER=1` /
    `IGVER_NO_SINGULARITY=1` (skip the Singularity wrapper).
-8. **IGV Preferences**: Customizes IGV display settings for genomics visualization
+8. **IGV Preferences (1.3.0)**: `run_igv()` gives every IGV launch a fresh `--igvDirectory`
+   (`_make_igv_run_dir()`: `tempfile.mkdtemp(prefix='igver_igv_')` under `$TMPDIR`, else the batch's
+   directory) holding `prefs.properties` = `igver/data/igv_prefs.properties` + `DEFAULT_GENOME_KEY=<genome>`
+   + `--igv-prefs` lines. Deleted on success; kept on failure and quoted in the error
+   (`_igv_log_excerpt()`). `--igv-dir` is only the IGV *install* directory. `~/igv` is never used.
+   - IGV **copies `~/igv/prefs.properties`** into an `--igvDirectory` that has none, so the prefs file
+     must be written before IGV starts.
+   - `-g <genome>` on the IGV command line does not stop the default-genome load; `DEFAULT_GENOME_KEY` does.
+   - Keep `_run_until_stalled(cmd, png_paths, stall_timeout, debug)`'s signature: the unit-test fakes
+     replace it and find the batch after ` -b ` in `cmd`.
+9. **Pre-flight (cli.py, before IGV starts)**: `expand_track_lists()` (every `.txt` in `-i`),
+   `find_missing_indexes()` (index beside the path *as given*: IGV does not follow a symlink),
+   `resolve_genome_file()` (relative FASTA → absolute; `.fai`/`.gzi` required), and region parsing in
+   `_get_paths_and_regions()` (missing region file, bad lines with `file:line`, reversed loci).
+10. **Region text grammar** (`_text_records()`): leading `contig:start-end` tokens (contig = text before the
+    last colon) are the loci, the rest of the line is the tag joined with `_`; BED-like lines are BED; any
+    other line is a `ValueError`. Duplicates (same locus + filename) are dropped in `_records_to_batch()`.
 
 ## Lessons Learned & Common Pitfalls
 
@@ -252,8 +272,25 @@ Run tests with: `pytest test/test_cli.py`
 - The retry mechanism (up to 2 iterations) re-renders only the snapshots still missing, not the
   whole batch. `--stall-timeout` (default 600s) kills an IGV process that has stopped producing
   snapshots — the usual cause is IGV blocking on an error dialog that headless mode cannot dismiss.
-- On failure igver keeps the batch script for the missing regions (path is in the error message);
-  IGV's own errors are in `~/igv/igv0.log`.
+- On failure igver keeps the batch script for the missing regions and that launch's IGV directory;
+  the error names both and quotes the log's SEVERE/ERROR lines, or its last 5 lines when there are none
+  (IGV logs nothing for a 404 track URL; the last line names it).
+
+### IGV Failure Modes Found in the 1.3.0 Audit (IGV 2.19.8, probed 2026-09-25)
+- **Blocks on a dialog (hang)**: missing BAM index, 404 track URL, dead-URL genome JSON. The first is
+  caught by the pre-flight; the others end in `--stall-timeout`.
+- **No dialog, renders**: index older than the BAM, corrupt BAM, unknown track extension.
+- **Silently wrong**: an unknown gene or contig snapshots the **whole-genome view** with exit 0 and
+  nothing in the log; igver can only warn for non-locus `-r` strings.
+- **Run-to-run variance**: identical runs differ in 0.6–2.4 % of pixels, all in UI chrome (ruler band,
+  dividers); the data area is identical. A rare header-repaint glitch has been seen (1 in ~45 renders).
+- **`-f pdf`**: IGV 2.19.8 SVGs have no size, so cairosvg writes an empty PDF (broken since 1.2.x).
+
+### Testing the Audit Fixes
+- Unit: `test/test_audit_1_3_0.py` (one class per bug, B1–B12).
+- e2e with real IGV: `test/e2e/run_e2e.sh host|image [--cases E1,E2a] [--no-repo-bind --sif <sif>]`
+  (cases in `test/e2e/cases.tsv`; image mode binds the working tree over `/opt/igver` and verifies it).
+  Full runs via `sbatch -p cpushort --exclude=isca071 -c 2 --mem=16G -t 01:30:00 -o test/e2e/logs/slurm_%j.out test/e2e/run_e2e.sh <mode>`.
 
 ### ssh Not Available in All Environments
 - `git pull` via SSH may fail on compute nodes where `ssh` binary is not in PATH. Use HTTPS URLs as a workaround:

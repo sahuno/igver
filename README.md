@@ -6,12 +6,41 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 > The methylation, parallel-rendering and PDF features documented below live in this fork.
 > PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
+**New in 1.3.0 (this fork)** — fixes for the 12 bugs of the 2026-09-25 audit. Behaviour changes:
+- **Your `~/igv` no longer affects screenshots.** Every IGV process gets a fresh, run-scoped IGV directory
+  (`igver_igv_*` under `$TMPDIR`, else the output directory) with igver's bundled preferences
+  (`igver/data/igv_prefs.properties`: 1150×800 window, batch port off, downsampling on, soft clips off) and
+  `DEFAULT_GENOME_KEY=<-g genome>`, so IGV loads only the requested genome, freshly from IGV's server — no
+  stale cached genome JSONs, no personal display settings, no shared log or port under `-j`. It is deleted
+  on success and kept on failure, and the error shows its log's SEVERE/ERROR lines (or its last lines).
+- **`--igv-prefs FILE`**: extra IGV preferences, one `KEY=VALUE` per line (e.g. `SAM.SHOW_SOFT_CLIPPED=true`),
+  applied after the template. A malformed line exits 1 before IGV starts.
+- **Region text files have a grammar** (see [Region Files](#region-files)): only the *leading* `chr:start-end`
+  tokens are loci; the rest of the line is the tag (spaces → `_`). A tag shaped like a locus (house locus IDs)
+  stays a tag, BED-like lines are read as BED, and any other line exits 1 with `file:line` — it used to
+  produce a hidden whole-genome `.tag.png` with exit 0.
+- **Snapshot filenames are sanitised**: characters outside `[A-Za-z0-9._+=,-]` become `_` (BED names with
+  spaces, `/`, `|`, `:` used to fail), no leading `.`, at most 200 bytes. See [Output File Naming](#output-file-naming).
+- **BED coordinates**: `goto` now uses `start+1` (BED is 0-based, IGV 1-based); the filename keeps the BED
+  coordinates. Tab-separated as before; a whitespace-separated BED is read with a warning; `.BED` and
+  `.bed.gz` work; a bad line or an empty BED is an error naming the file (and line).
+- **Pre-flight checks before IGV starts** (instead of a 2 × `--stall-timeout` hang): a missing BAM/CRAM/VCF.gz/BCF
+  index (looked for beside the path as given — a symlinked BAM needs its index beside the link), a missing
+  region file (`-r typo.bed` used to be treated as a locus), a reversed locus, a relative or unindexed FASTA
+  for `-g`. Relative genome files are made absolute and their directories bind-mounted.
+- Duplicate regions are rendered once (with a warning); every `.txt` item of `-i` is a track list (mixed
+  with tracks too); paths with spaces are quoted; URL tracks (`https://`, `s3://` …) are passed through.
+- `-r <gene name>` warns: IGV 2.19.8 silently snapshots the **whole genome** for a name (or contig) it does not know.
+- The image is built from the commit being built (`/opt/igver/BUILD_SHA`), not from `main` HEAD.
+- **Known issue**: `-f pdf` does not work with IGV 2.19.8 (also in 1.2.x): its SVGs carry no size, so the
+  converted PDF is empty and igver exits 1. Use `-f svg` or PNG.
+
 **New in 1.2.3 (this fork):**
 - **Fixed**: `-d/--overlap-display` (default `squish`) is now applied to BAM/CRAM/SAM tracks by name. It used to be a bare IGV command that also squished the RefSeq gene track, which then filled the panel and hid every BED/annotation track below it. Annotation tracks now keep IGV's default (collapsed) layout.
 
 **New in 1.2.2 (this fork):**
 - Refreshed the bundled genome definitions for hg19, hg38, mm10, mm39 and rn6 from igv.org; their sequence/annotation URLs pointed at retired S3 buckets (HTTP 403/404), which makes IGV hang on an error dialog in headless mode
-- If screenshots hang right after `Loading genome: ~/igv/genomes/<genome>.json`, your *cached* copy is stale: `curl -sf https://igv.org/genomes/json/<genome>.json -o ~/igv/genomes/<genome>.json`
+- (igver ≤ 1.2.3 only; 1.3.0 does not read `~/igv`) If screenshots hang right after `Loading genome: ~/igv/genomes/<genome>.json`, your *cached* copy is stale: `curl -sf https://igv.org/genomes/json/<genome>.json -o ~/igv/genomes/<genome>.json`
 
 **New in 1.2.1 (this fork):**
 - IGV 2.19.8 in the container (from 2.19.5); `/opt/IGV_2.19.5` is kept as a symlink so igver ≤ 1.2.0 still works against `:latest`
@@ -32,6 +61,7 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 
 **Container versions:**
 - `sahuno/igver:latest` — most recent (recommended)
+- `sahuno/igver:1.3.0` — igver 1.3.0 with IGV 2.19.8; run-scoped IGV preferences, pre-flight checks, region grammar
 - `sahuno/igver:1.2.3` — igver 1.2.3 with IGV 2.19.8; `-d` no longer hides BED tracks
 - `sahuno/igver:1.2.2` — igver 1.2.2 with IGV 2.19.8 and refreshed genome definitions
 - `sahuno/igver:1.2.1` — igver 1.2.1 with IGV 2.19.8
@@ -174,12 +204,13 @@ igver -i sample.bam -r "chr1:1000-2000" "chr2:3000-4000" -o ./screenshots
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i`, `--input` | Input BAM/CRAM/BEDPE/VCF/bigWig file(s), or a single `.txt` file with one path per line | *required* |
-| `-r`, `--regions` | Genomic regions (`chr1:100-200`), region file (`.txt`), or BED file (`.bed`) | *required* |
+| `-i`, `--input` | Input BAM/CRAM/BEDPE/VCF/bigWig file(s) or URLs; every `.txt` item is a track list (one path per line), expanded in place | *required* |
+| `-r`, `--regions` | Genomic regions (`chr1:100-200`), region file (`.txt`), or BED file (`.bed`, `.bed.gz`); an argument with a `/` or a file extension that does not exist is an error | *required* |
 | `-o`, `--output` | Output directory for screenshots. When left at the default, `$TMPDIR` is used if set, else `/tmp` | `$TMPDIR` or `/tmp` |
-| `-g`, `--genome` | IGV genome id (`hg38`), a supported alias (`GRCh38`), or a path to a reference FASTA/`.genome` | `hg19` |
+| `-g`, `--genome` | IGV genome id (`hg38`), a supported alias (`GRCh38`), or a path (relative is fine) to a reference FASTA (needs `.fai`; `.gz` also `.gzi`), `.genome` or `.json` | `hg19` |
 | `--dpi` | DPI resolution for output images | `300` |
-| `--igv-dir` | Path to the IGV installation inside the container | `/opt/IGV_2.19.8` |
+| `--igv-dir` | Path to the IGV installation inside the container (IGV's writable prefs/cache/log directory is separate and created per run) | `/opt/IGV_2.19.8` |
+| `--igv-prefs` | File of extra IGV preferences, one `KEY=VALUE` per line, applied after igver's bundled template | *none* |
 | `-p`, `--max-panel-height` | Maximum pixel height per track panel | `200` |
 | `-d`, `--overlap-display` | Read display mode: `expand`, `collapse`, or `squish` | `squish` |
 | `-c`, `--igv-config` | File of additional IGV **batch commands** injected before each snapshot (not `KEY=VALUE` properties) | *none* |
@@ -191,7 +222,7 @@ igver -i sample.bam -r "chr1:1000-2000" "chr2:3000-4000" -o ./screenshots
 | `--singularity-image` | Singularity/Docker image path | `docker://sahuno/igver:latest` |
 | `--singularity-args` | Additional Singularity arguments; input/output/TMPDIR binds are added automatically (see [pitfall 3](#3-bind-mounting-data-directories)) | `-B /home` |
 | `--no-singularity` | Run IGV directly without the Singularity wrapper (**required** when igver itself runs inside a container) | `false` |
-| `--debug` | Enable debug logging (prints the IGV command and batch progress) | `false` |
+| `--debug` | Enable debug logging (prints the batch script, the IGV command, each run's IGV directory and IGV's console output) | `false` |
 | `--version` | Print the igver version and exit | — |
 
 **Notes on `--igv-config`**: the file may contain any valid
@@ -291,23 +322,36 @@ igver.run_igv(batch_file, output_paths, use_singularity=False)
 ## Supported File Formats
 
 ### Input Files
-- **BAM** (requires `.bai` index)
-- **CRAM** (requires `.crai` index; pass the reference FASTA via `--genome`)
+- **BAM** (requires `<f>.bai`, `<stem>.bai` or `<f>.csi` beside the path as given; checked before IGV starts)
+- **CRAM** (requires `<f>.crai` or `<stem>.crai`; pass the reference FASTA via `--genome`)
+- **VCF.gz / BCF** (require `.tbi`/`.csi` / `.csi`)
+- **URLs** (`https://`, `s3://`, …) are passed to IGV as is (no index check)
 - **BEDPE** (structural variants)
 - **VCF** (variant calls)
 - **bigWig** (coverage tracks)
 - **`.txt`** manifest: one track path per line, `#` comments and blank lines skipped, `~` expanded
 
 ### Region Files
-- **BED3**: `chrom<TAB>start<TAB>end`
-- **BED4/BED6**: a non-empty 4th column (name) is appended to the output filename; `track`/`browser`/`#` lines are skipped
-- **Text**: whitespace-separated `chr:start-end` tokens, plus an optional trailing tag; multiple regions on one line become one split-screen image
+- **BED3**: `chrom<TAB>start<TAB>end` (`.bed`, `.BED`, `.bed.gz`). Starts are 0-based: `chr1 100 200` is
+  shown as `chr1:101-200`. A whitespace-separated BED is read with a warning; a line that is not
+  `chrom start end` with integer coordinates, or a file with no regions, is an error naming file and line.
+- **BED4/BED6**: a non-empty 4th column (name) is appended (sanitised) to the output filename; `track`/`browser`/`#` lines are skipped
+- **Text** (any other extension), one image per line, whitespace-separated tokens:
+  - the **leading** tokens of the form `contig:start-end` are the loci (several = one split-screen image, e.g.
+    for SVs). The contig is everything before the *last* colon (`HLA-A*01:01:01:01:1-100` is one locus);
+    coordinates may contain commas; start must be ≤ end.
+  - everything from the first non-locus token on is the **tag**, joined with `_`
+    (`chr1:1-2 my tag here` → tag `my_tag_here`; `chr1:1-2 chr1:1-2.L1.1.+` → tag `chr1_1-2.L1.1.+`).
+  - a line without a leading locus is read as BED if it looks like BED (`chr1 100 200 name`, warned once
+    per file); anything else (e.g. a bare `TP53`) is an error with `file:line`. `#` lines and blank lines are skipped.
 
 ### Output Formats
 - **PNG** (default): raster
 - **SVG**: vector, written directly by IGV
 - **PDF**: IGV writes SVG, then igver converts it with `cairosvg` (`pip install cairosvg`).
   Via the CLI the intermediate `.svg` files are **kept** next to the `.pdf`s.
+  **Currently broken with IGV 2.19.8** (1.2.x too): its SVGs have no width/height/viewBox, so cairosvg
+  writes an empty PDF and igver exits 1; the image also lacks cairosvg. Use `-f svg`.
 
 ## Output File Naming
 
@@ -320,6 +364,16 @@ The extension follows `-f/--format` (`svg` for both `-f svg` and the intermediat
 
 Colons become hyphens; spaces between regions become dots. A BED name column takes precedence over
 an explicit `tag`. All tracks given to `-i` share one image per region.
+
+- BED regions keep their **BED coordinates** in the filename (`chr1 100 200` → `chr1-100-200.png`,
+  shown as `chr1:101-200`), so downstream scripts can match files to BED lines.
+- Loci are normalised: `chr1:1,000-2,000` → `chr1-1000-2000`.
+- Every name part (BED name, text-file tag, `tag`, the region itself) is sanitised: characters outside
+  `[A-Za-z0-9._+=,-]` become `_`, runs of `_` collapse, leading `.`/`_` are dropped, and the whole
+  filename is capped at 200 bytes (the tag is truncated first). Examples: `my region` → `my_region`,
+  `LINE/L1` → `LINE_L1`, `chr1:1-2.L1|3.-` → `chr1_1-2.L1_3.-`, `.hidden` → `hidden`.
+- Two lines with the same locus and the same resulting filename are rendered once (with a warning);
+  two different loci that would share a filename are an error.
 
 ## Examples
 
@@ -457,7 +511,12 @@ igver -i sample.bam -r 1483_L1_elements.bed -j 8 -o ./screenshots
 - Rendering is attempted at most **2 iterations**; the second pass re-renders only the snapshots
   that are still missing, not the whole batch.
 - If snapshots are still missing after that, igver raises and **keeps the batch script** for the
-  missing regions so you can run it by hand. IGV's own errors are in `~/igv/igv0.log`.
+  missing regions so you can run it by hand, and **keeps that process's IGV directory**
+  (`igver_igv_*`); the error message names it and quotes its `igv0.log` (SEVERE/ERROR lines, or the last
+  lines — IGV logs nothing for some errors, e.g. a 404 track URL, but the last line names the resource).
+  With `-j`, every failed chunk is reported with its own directory.
+- Each process has its own IGV directory and the batch port is disabled, so parallel JVMs no longer
+  share a log or race for port 60151.
 
 ### Batch Processing Multiple Samples
 ```python
@@ -604,10 +663,11 @@ igver -i ont_reads.bam -r regions.bed -d expand -p 1000 --dpi 600 -o ./screensho
 
 ### Common Errors
 - **`Failed to generate all PNG files after 2 iterations`**: igver keeps the batch script for the
-  regions that failed — the path is in the error message. Run it manually with `--debug`, and read
-  `~/igv/igv0.log` for IGV's own error.
+  regions that failed and that run's IGV directory (`igver_igv_*`) — both paths and the IGV log's
+  errors are in the error message. Rerun with `--debug` to see IGV's console output.
+- **Whole-genome view instead of the region**: IGV did not know the gene or contig name. Check
+  chromosome naming (`chr1` vs `1`) against the BAM header and the genome.
 - **No screenshots generated**:
-  - Check the BAM/CRAM index (`.bai`/`.crai`) exists
   - Check chromosome naming (`chr1` vs `1`)
   - Check output directory permissions
 - **Run hangs, no new files**: IGV is probably blocked on a headless error dialog — that is what
