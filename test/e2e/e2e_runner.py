@@ -209,6 +209,35 @@ def run_case(case, mode, sif, bind_repo, outroot, done):
             left = [d for d in os.listdir(tmp) if d.startswith('igver_')]
             if left:
                 fails.append(f'run dirs left in TMPDIR: {left}')
+        elif kind == 'identical_to':
+            for p in pngs:
+                q = os.path.join(outroot, arg, os.path.basename(p))
+                if not os.path.exists(q):
+                    fails.append(f'identical_to: {q} missing')
+                    continue
+                same_dims, frac = pixel_diff(p, q)
+                print(f'    {cid} vs {arg}: same_dims={same_dims} differing_pixels={frac:.5%}')
+                if not same_dims or frac:
+                    fails.append(f'not pixel-identical to {arg}: dims={same_dims} frac={frac:.4%}')
+        elif kind == 'repeat':
+            first = {f: hashlib.md5(open(os.path.join(out, f), 'rb').read()).hexdigest() for f in got}
+            for n in range(2, int(arg) + 1):
+                rep = f'{out}.rep{n}'
+                shutil.rmtree(rep, ignore_errors=True)
+                os.makedirs(rep)
+                rcmd = [rep if c == out else c for c in cmd]
+                r = subprocess.run(rcmd, cwd=FIX, env=env, capture_output=True, timeout=max_s + 60)
+                digests = {f: hashlib.md5(open(os.path.join(rep, f), 'rb').read()).hexdigest()
+                           for f in sorted(os.listdir(rep)) if not BATCH_RE.match(f)}
+                differ = [f for f in first if digests.get(f) != first[f]]
+                print(f'    {cid} run {n}: exit {r.returncode}, {len(digests)} files, {len(differ)} differ from run 1')
+                if r.returncode or differ or set(digests) != set(first):
+                    fails.append(f'run {n}: exit {r.returncode}, differing {differ}')
+        elif kind == 'svg_sized':
+            for svg in [os.path.join(out, f) for f in got if f.endswith('.svg')]:
+                root = re.search(r'<svg\b[^>]*>', open(svg).read())
+                if not root or 'viewBox=' not in root.group(0):
+                    fails.append(f'{os.path.basename(svg)} has no viewBox')
         elif kind == 'pdf_width':
             for pdf in [os.path.join(out, f) for f in got if f.endswith('.pdf')]:
                 size = os.path.getsize(pdf)

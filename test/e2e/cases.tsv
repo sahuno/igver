@@ -5,7 +5,9 @@
 # expect_files: ';'-separated exact `ls -A` of {OUT} (a kept <uuid>.batch is reported but not compared); '-' = empty.
 # checks (';'-separated): grep:RE / nogrep:RE on stdout+stderr; count:RE=N; width:N (every PNG);
 #   tmp_clean (no igver_* dir left in the case TMPDIR); pdf_width:N (every PDF > 20 KB, rasterises at 300 dpi = igver's default --dpi to N px); home_untouched (real ~/igv log mtime + prefs sha1);
-#   rundirs:N (distinct igver_igv_ dirs named in the output); same_as:CASE / differs_from:CASE (pixel compare
+#   rundirs:N (distinct igver_igv_ dirs named in the output); identical_to:CASE (pixel-identical PNG);
+#   repeat:N (run the case N-1 more times, every run's PNGs byte-identical); svg_sized (every SVG root has a viewBox);
+#   same_as:CASE / differs_from:CASE (pixel compare
 #   of the same-named PNG); overlay:poisoned (bind a copy of fixtures/poisoned_igv over ~/igv);
 #   setup:stale_index (copy {BAM}+index to {SETUP}, index older than BAM); visual (PNG must be opened by hand).
 case_id	mode	args	expect_exit	expect_files	max_seconds	checks	notes
@@ -15,7 +17,7 @@ E1b	both	-i {BAM} -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-3253676
 E1c	both	-i {BAM} -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120	home_untouched	B1: the real ~/igv is not written
 E1d	both	-i {BAM} -r 8:32534767-32536767 --igv-prefs {FIX}/softclip.prefs --stall-timeout 60	0	8-32534767-32536767.png	120	differs_from:E1;visual	B1: --igv-prefs SAM.SHOW_SOFT_CLIPPED=true changes the rendering
 E1d_bad	both	-i {BAM} -r 8:32534767-32536767 --igv-prefs {FIX}/bad.prefs --stall-timeout 60	1	-	5	grep:bad.prefs:1;tmp_clean	B1: malformed --igv-prefs exits before IGV
-E1e	both	-i {BAM} -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120	same_as:E1	B1: two identical runs give identical output
+E1e	both	-i {BAM} -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120	identical_to:E1	B1/1.4.0: two identical runs give pixel-identical output (stability protocol)
 E2a	both	-i {BAM} -r {FIX}/e2a_locusid.txt --stall-timeout 60	0	8-32534767-32536767.8_32534767-32536767.L1MdF_I.1.+.png	120	visual	B2: locus-ID tag stays a tag (single panel)
 E2b	both	-i {BAM} -r {FIX}/e2b_bedlike.txt --stall-timeout 60	0	8-32534766-32536767.bedlike.png	120	grep:BED-like;visual	B2: BED-like line in .txt
 E2c	both	-i {BAM} -r {FIX}/e2c_bad.txt --stall-timeout 60	1	-	5	grep:e2c_bad.txt:2;tmp_clean	B2: bad line exits before IGV
@@ -42,3 +44,5 @@ U1b	both	-i {BAM} -r "8:32534767-32536767 NOSUCHCONTIG:1-100" --stall-timeout 60
 U1c	both	-i {BAM} -r 8:32534767-32536767 8:999999999-1000000100 --stall-timeout 60	1	8-32534767-32536767.png	120	grep:8:999999999-1000000100.*could not find	U1: start beyond the chromosome end -> exit 1
 U1d	both	-i {BAM} -r TP53 --stall-timeout 60	0	TP53.png	120	tmp_clean;visual	U1: a gene IGV knows renders (hg19 TP53 on chr17)
 U1e	both	-i {BAM} -r All --stall-timeout 60	0	All.png	120	tmp_clean	U1: an explicit whole-genome request is allowed
+S1	both	-i {BAM} -r 8:32534767-32536767 19:11137898-11139898 8:32600000-32602000 --stall-timeout 60	0	8-32534767-32536767.png;19-11137898-11139898.png;8-32600000-32602000.png	300	repeat:5;tmp_clean	1.4.0: 5 separate runs of 3 regions give byte-identical PNGs
+S2	both	-i {BAM} -r 8:32534767-32536767 -f svg --stall-timeout 60	0	8-32534767-32536767.svg	120	svg_sized;tmp_clean	1.4.0: SVG output with pre/post stability captures (and a size)
