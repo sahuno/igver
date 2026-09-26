@@ -1,7 +1,7 @@
 # igver audit bug-fix plan (target release 1.3.0)
 
 Author: Samuel Ahuno (plan drafted with Claude Code), 2026-09-25
-Status: NOT STARTED. The executing agent updates the checklist in §7 and `PROGRESS.md` as it works.
+Status: EXECUTED 2026-09-25 (branch fix/audit-1.3.0). Checklist in §7; evidence per box in `PROGRESS.md` (log entries of 2026-09-25). Blocked items are open unknowns there.
 
 This plan is written for an autonomous Claude Code session that starts with **no memory** of the
 session that produced it. Everything needed is here or linked. Read the whole plan before touching code.
@@ -92,17 +92,17 @@ pointing at retired S3 buckets) made mm10 runs hang on 2026-09-25.
   not reintroduce the shared cache.
 
 **Done when.**
-- [ ] Log of every run contains `IGV Directory: <igver run dir>`, never `/home/<user>/igv` (e2e E1, both modes).
-- [ ] With a poisoned `~/igv` overlay (§3.4: dead-URL `mm10.json`, `IGV.Bounds=0,0,700,500`,
+- [x] Log of every run contains `IGV Directory: <igver run dir>`, never `/home/<user>/igv` (e2e E1, both modes).
+- [x] With a poisoned `~/igv` overlay (§3.4: dead-URL `mm10.json`, `IGV.Bounds=0,0,700,500`,
       `SAM.SHOW_SOFT_CLIPPED=true`), 1.2.3 hangs or renders at 700 px wide (negative control recorded), and
       the fixed code renders mm10 successfully with the template width (e2e E1a/E1b).
-- [ ] Real `~/igv/igv0.log` mtime and `~/igv/prefs.properties` checksum are unchanged by a run (E1c).
-- [ ] `--igv-prefs` with `SAM.SHOW_SOFT_CLIPPED=true` changes the rendering (visible soft clips on the
+- [x] Real `~/igv/igv0.log` mtime and `~/igv/prefs.properties` checksum are unchanged by a run (E1c).
+- [x] `--igv-prefs` with `SAM.SHOW_SOFT_CLIPPED=true` changes the rendering (visible soft clips on the
       test BAM; spot-checked PNG) and a malformed line exits 1 before IGV starts (unit + E1d).
-- [ ] Failure path keeps the run dir and prints SEVERE lines (E3 output contains the log excerpt).
-- [ ] Two identical runs of the same input produce byte-identical PNGs or, if IGV output is not
+- [x] Failure path keeps the run dir and prints SEVERE lines (E3 output contains the log excerpt).
+- [ ] **BLOCKED (PROGRESS open unknown 3)** Two identical runs of the same input produce byte-identical PNGs or, if IGV output is not
       deterministic, identical dimensions and a pixel difference below 0.5% (measure and record) (E1e).
-- [ ] Unit tests: template is packaged and loadable after `pip install .` into a clean venv; the
+- [x] Unit tests: template is packaged and loadable after `pip install .` into a clean venv; the
       generated IGV command contains `--igvDirectory <tmp>`; `--igv-prefs` parsing positive/negative.
 
 ### B2 (S1, repro) — Text region files silently produce wrong screenshots
@@ -126,16 +126,16 @@ exit 0. Multi-word tags keep only the last word.
 - An output name can never start with `.` (see B4 sanitiser).
 
 **Done when.**
-- [ ] Unit tests (write first, must fail on current code): locus-ID tag with `+` stays a tag;
+- [x] Unit tests (write first, must fail on current code): locus-ID tag with `+` stays a tag;
       multi-word tag preserved (`my_tag_here`); `chr1 100 200 regionA` in `.txt` parses as a BED
       region; `TP53` alone errors with line number; `chr1:200-100` errors; comma coordinates work;
       two leading loci + tag → split view + tag (legacy SV format still works: the existing
       `test/regions.txt` style); tag containing `:` and `-` in non-leading position stays a tag;
       `HLA-A*01:01:01:01:1-100` parses as one valid locus with contig `HLA-A*01:01:01:01`.
-- [ ] No code path can produce `goto ` with an empty argument (property test: fuzz 1,000 random
+- [x] No code path can produce `goto ` with an empty argument (property test: fuzz 1,000 random
       lines through the parser — each either raises `ValueError` with a line number or yields
       non-empty loci; use `random.Random(42)`).
-- [ ] E2E E2a: the `+`-strand locus-ID file renders one panel (PNG opened and confirmed single panel)
+- [x] E2E E2a: the `+`-strand locus-ID file renders one panel (PNG opened and confirmed single panel)
       with the tag in the filename. E2b: the BED-like `.txt` renders the right locus, visible filename.
       E2c: a file with a bad line exits 1 in < 5 s without starting IGV.
 
@@ -156,12 +156,12 @@ the finding either way.
 Add to the stall message: the tail of the run's IGV log (from B1).
 
 **Done when.**
-- [ ] Unit tests for each index naming convention (positive: each accepted name; negative: none
+- [x] Unit tests for each index naming convention (positive: each accepted name; negative: none
       present; symlinked BAM whose index sits only beside the target → error that mentions the target's index).
-- [ ] E2E E3a: BAM symlink without index exits 1 in < 5 s, message names the missing index path, no
+- [x] E2E E3a: BAM symlink without index exits 1 in < 5 s, message names the missing index path, no
       IGV process started (no `igver_igv_*` run dir created).
-- [ ] E3b (index-older investigation) result recorded in PROGRESS with evidence; behaviour matches the finding.
-- [ ] Forced stall (e.g. `--stall-timeout 20` with a region on a contig IGV rejects, or another
+- [x] E3b (index-older investigation) result recorded in PROGRESS with evidence; behaviour matches the finding.
+- [x] Forced stall (e.g. `--stall-timeout 20` with a region on a contig IGV rejects, or another
       dialog trigger found) prints the IGV log excerpt.
 
 ### B4 (S2, repro) — BED names with spaces or `/` never produce a snapshot
@@ -178,11 +178,11 @@ Also: paths passed to `load`, `snapshotDirectory` and `genome` may contain space
 batch accepts double-quoted arguments. If yes, quote them; if no, fail early with a clear message.
 
 **Done when.**
-- [ ] Unit tests: `my region` → `my_region`; `LINE/L1` → `LINE_L1`; `chr1:1-2.L1|3.-` →
+- [x] Unit tests: `my region` → `my_region`; `LINE/L1` → `LINE_L1`; `chr1:1-2.L1|3.-` →
       `chr1_1-2.L1_3.-`; `.hidden` → `hidden`; 300-char name truncated to ≤ 200-byte filename;
       unicode name → sanitised ASCII; the sanitiser is idempotent.
-- [ ] E2E E4a/E4b: BED names with a space and with `/` render, with the expected sanitised filenames.
-- [ ] E4c: an input BAM path containing a space either renders (quoting works) or fails in < 5 s
+- [x] E2E E4a/E4b: BED names with a space and with `/` render, with the expected sanitised filenames.
+- [x] E4c: an input BAM path containing a space either renders (quoting works) or fails in < 5 s
       with a clear message; the finding is recorded.
 
 ### B5 (S2, repro) — A typo'd region file path is treated as a locus
@@ -198,9 +198,9 @@ stall timeout): if it hangs, document it and make the stall message say "IGV cou
 '<x>'" when the IGV log shows that.
 
 **Done when.**
-- [ ] Unit tests: missing `.bed`/`.txt`/`.BED`/path-with-slash → error; `TP53` accepted;
+- [x] Unit tests: missing `.bed`/`.txt`/`.BED`/path-with-slash → error; `TP53` accepted;
       `chr1:1-100 chr2:5-10` accepted; `chr1:100-1` rejected.
-- [ ] E2E E5a: `-r typo.bed` exits 1 in < 5 s with "region file not found". E5b: unknown gene
+- [x] E2E E5a: `-r typo.bed` exits 1 in < 5 s with "region file not found". E5b: unknown gene
       behaviour recorded, message improved if applicable.
 
 ### B6 (S3, code) — Duplicate snapshot names overwrite silently
@@ -208,16 +208,16 @@ stall timeout): if it hangs, document it and make the stall message say "IGV cou
 one warning listing them. Same filename with different content is impossible by construction; assert
 that and raise if it ever happens.
 **Done when.**
-- [ ] Unit: BED with a duplicated line → one block + warning; duplicates across two `-r` files → one block.
-- [ ] E2E E6 with `-j 2`: expected file count equals unique regions; no errors.
+- [x] Unit: BED with a duplicated line → one block + warning; duplicates across two `-r` files → one block.
+- [x] E2E E6 with `-j 2`: expected file count equals unique regions; no errors.
 
 ### B7 (S3, code) — A `.txt` track list only works as the sole `-i` argument
 **Design.** Expand every `-i` item ending in `.txt` (case-insensitive) in place, preserving order;
 mixed lists and several list files work. Keep existing semantics otherwise (comments, blank lines,
 `~` expansion, relative paths resolved against the current directory as today — do not change that).
 **Done when.**
-- [ ] Unit: `-i list.txt extra.bam` → list contents then `extra.bam`; two lists; missing list → error.
-- [ ] E2E E7: mixed `-i tracks.txt other.bed` renders both tracks (PNG confirms both track names).
+- [x] Unit: `-i list.txt extra.bam` → list contents then `extra.bam`; two lists; missing list → error.
+- [x] E2E E7: mixed `-i tracks.txt other.bed` renders both tracks (PNG confirms both track names).
 
 ### B8 (S3, code) — `-g` with a relative FASTA path fails; its directory is not bound
 **Design.** If `--genome` names an existing local file (`.fa`, `.fasta`, `.fna`, `.genome`, `.json`,
@@ -225,8 +225,8 @@ optionally `.gz`), convert to an absolute path before writing the batch, and add
 the realpath's directory) to the Singularity binds. For FASTA, require an index (`.fai`; for `.gz`
 also `.gzi`); missing → exit 1 before IGV starts.
 **Done when.**
-- [ ] Unit: relative FASTA → absolute path in batch; bind list contains its directory; missing `.fai` → error.
-- [ ] E2E E8: create symlinks `test/e2e/fixtures/grch37.fa -> /data1/greenbab/database/human_GRCh37/GRCh37-lite.fa`
+- [x] Unit: relative FASTA → absolute path in batch; bind list contains its directory; missing `.fai` → error.
+- [x] E2E E8: create symlinks `test/e2e/fixtures/grch37.fa -> /data1/greenbab/database/human_GRCh37/GRCh37-lite.fa`
       and `grch37.fa.fai -> .../GRCh37-lite.fa.fai` (both exist; contigs have no `chr`, matching
       `test/test_tumor.bam`). Passing `-g grch37.fa` as a **relative** path from `test/e2e/fixtures/`
       renders `8:32534767-32536767` in host-wrapper mode with no manual `--singularity-args`. Because
@@ -239,9 +239,9 @@ whitespace fields, parse on whitespace and warn once per file. Any other unparse
 with file:line. Zero regions after parsing → error naming the file. Accept `.bed` case-insensitively
 and `.bed.gz` (read with `gzip`).
 **Done when.**
-- [ ] Unit: space-separated BED parses (with warning); `chr1\tabc\t200` errors with line number;
+- [x] Unit: space-separated BED parses (with warning); `chr1\tabc\t200` errors with line number;
       header/`track`/`browser`/`#` lines skipped; `.BED` and `.bed.gz` work; empty BED errors.
-- [ ] E2E E9: space-separated BED renders the expected files.
+- [x] E2E E9: space-separated BED renders the expected files.
 
 ### B10 (S3, code) — The image installs `main` HEAD instead of the commit being built
 **Problem.** `docker/Dockerfile` runs `git clone https://github.com/sahuno/igver.git`, so an image
@@ -263,15 +263,15 @@ and any hidden scratch directories). Record the commit SHA in the image (build-a
 ### B11 (S3, repro) — `-j` processes share `~/igv` (log rotation, port clash)
 Fixed by B1's per-process run directory and `PORT_ENABLED=false`.
 **Done when.**
-- [ ] E2E E11 (`-j 2`): two distinct run dirs appear in the debug output; neither IGV log contains
+- [x] E2E E11 (`-j 2`): two distinct run dirs appear in the debug output; neither IGV log contains
       `BindException`; on a forced failure each chunk's message points at its own log.
 
 ### B12 (S3, code) — BED start passed to `goto` without +1
 **Design.** `goto chrom:{start+1}-{end}` for BED records (0-based half-open → 1-based closed).
 Filenames keep the original BED coordinates (downstream scripts match on them); document that.
 **Done when.**
-- [ ] Unit: BED `chr1 100 200` → `goto chr1:101-200`, filename `chr1-100-200...`.
-- [ ] Existing BED tests updated only where they asserted the old off-by-one `goto` (justify each
+- [x] Unit: BED `chr1 100 200` → `goto chr1:101-200`, filename `chr1-100-200...`.
+- [x] Existing BED tests updated only where they asserted the old off-by-one `goto` (justify each
       change in the commit message).
 
 ---
@@ -441,16 +441,16 @@ design change, every blocked item, and anything that still needs the user's deci
 ## 7. Checklist
 
 Phase A
-- [ ] A1 `test/test_audit_1_3_0.py` written; baseline pass/fail recorded
-- [ ] A2 e2e harness + cases written; baseline table recorded
-- [ ] A3 poisoned-environment fixture built (§3.4)
+- [x] A1 `test/test_audit_1_3_0.py` written; baseline pass/fail recorded
+- [x] A2 e2e harness + cases written; baseline table recorded
+- [x] A3 poisoned-environment fixture built (§3.4)
 
 Phase B (tick each bug only when all of its "Done when" boxes in §2 are ticked)
-- [ ] B1  [ ] B2  [ ] B3  [ ] B4  [ ] B5  [ ] B6
-- [ ] B7  [ ] B8  [ ] B9  [ ] B10 [ ] B11 [ ] B12
+- [ ] B1 (blocked: E1e determinism, open unknown 3)  [x] B2  [x] B3  [x] B4  [x] B5  [x] B6
+- [x] B7  [x] B8  [x] B9  [ ] B10 (after CI)  [x] B11 [x] B12
 
 Phase C
-- [ ] C1 docs updated  [ ] C2 suites green both modes  [ ] C3 merged, CI green
+- [x] C1 docs updated  [ ] C2 suites green both modes (blocked: host 27/28, image 26/28 at 3646d98; E1e = open unknown 3, R4 = open unknown 5)  [ ] C3 merged, CI green
 - [ ] C4 release-gate e2e on pulled SIF  [ ] C5 `igver_latest.sif` repointed, old SIF archived
 - [ ] C7 PROGRESS.md final entry pushed
 
