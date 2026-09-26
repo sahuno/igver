@@ -32,6 +32,7 @@ FIX = os.path.join(HERE, 'fixtures')
 APPTAINER = '/home/ahunos/miniforge3/envs/snakemake/bin/apptainer'
 IGVER_HOST = os.environ.get('E2E_IGVER_HOST', '/home/ahunos/miniforge3/envs/igver/bin/igver')
 DEFAULT_SIF = '/data1/greenbab/software/images/igver_latest.sif'
+PDFTOPPM = '/home/ahunos/miniforge3/envs/r-env/bin/pdftoppm'
 PLACEHOLDERS = {
     'BAM': os.path.join(REPO, 'test', 'test_tumor.bam'),
     'FIX': FIX,
@@ -205,9 +206,19 @@ def run_case(case, mode, sif, bind_repo, outroot, done):
                 if w != int(arg):
                     fails.append(f'{os.path.basename(p)} width {w} != {arg}')
         elif kind == 'tmp_clean':
-            left = [d for d in os.listdir(tmp) if d.startswith('igver_igv_')]
+            left = [d for d in os.listdir(tmp) if d.startswith('igver_')]
             if left:
                 fails.append(f'run dirs left in TMPDIR: {left}')
+        elif kind == 'pdf_width':
+            for pdf in [os.path.join(out, f) for f in got if f.endswith('.pdf')]:
+                size = os.path.getsize(pdf)
+                prefix = os.path.join(out + '.setup', 'pdf_raster')
+                r = subprocess.run([PDFTOPPM, '-png', '-r', '96', '-singlefile', pdf, prefix],
+                                   capture_output=True, text=True)
+                w = Image.open(prefix + '.png').size[0] if r.returncode == 0 else None
+                print(f'    {cid}: {os.path.basename(pdf)} {size} bytes, rasterised width {w}')
+                if size < 20000 or w != int(arg):
+                    fails.append(f'{os.path.basename(pdf)}: {size} bytes, raster width {w} (want > 20 KB, {arg} px)')
         elif kind == 'home_untouched':
             after = home_state()
             if after != before:

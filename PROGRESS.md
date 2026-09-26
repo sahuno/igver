@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: Decide open unknowns 2-5 (snapshot size, chrome variance/E1e, unknown-locus validation, PDF)
+next_action: 1.3.1 on branch fix/1.3.1: detect unknown gene/contig, fix -f pdf; user to pick a run-to-run variance approach
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -26,10 +26,10 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 | # | Question | Owner | Decide by | Status |
 |---|---|---|---|---|
 | 1 | Swap shared `igver_latest.sif` to the IGV 2.19.8 build? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: yes |
-| 2 | Keep `IGV.Bounds=0,0,1150,800` in the bundled prefs template, or choose another snapshot size? (1150 px = the de-facto width of existing lab figures; plan says the user decides) | Samuel Ahuno | 2026-10-09 | open |
+| 2 | Keep `IGV.Bounds=0,0,1150,800` in the bundled prefs template, or choose another snapshot size? (1150 px = the de-facto width of existing lab figures; plan says the user decides) | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: keep 1150x800 |
 | 3 | E1e (B1 determinism) is flaky against "< 0.5 % pixels differ": 4 identical runs differ 0.58–2.44 %, **only** in UI chrome (ruler/sequence band y≈100–120, 3-row dividers y≈130 and y≈333); the alignment area (y 136–330) is pixel-identical in every pair. Not downsampling (`SAM.DOWNSAMPLE_READS=false`: 1.16–2.44 %). `setSleepInterval 4000` → 0–0.58 % (one 3-row strip left) but costs ~4 s per batch command. E1e then passed in 2 of 6 later suite runs (host C2, release gate) and failed in 4 (0.58–2.43 %). Separately, a **header-repaint glitch** (ideogram/ruler overpainted by a shifted alignment panel) was seen once in ~109 fixed-code renders (image-mode E2b) and 0/20 in a 1.2.3 control, so its rate is not attributable. Accept chrome-only variance (and measure only the data area), adopt a sleep interval, or leave as is? | Samuel Ahuno | 2026-10-09 | open |
-| 4 | Unknown gene or unknown contig (`-r NOTAGENE123`, `NOSUCHCONTIG:1-100`): IGV 2.19.8 silently snapshots the **whole-genome view**, exit 0, nothing in igv0.log or stdout (probe 2026-09-25). igver can only warn. Validate contigs against the genome's .fai/chrom sizes in a later release? | Samuel Ahuno | 2026-10-09 | open |
-| 5 | `-f pdf` is broken in 1.2.3 itself (pre-existing, outside the 12 audited bugs): IGV 2.19.8 SVGs have no width/height/viewBox, so cairosvg writes an 845-byte empty PDF and igver exits 1 (host); the image has no cairosvg at all. e2e R4 fails for this reason. Fix in 1.3.x (e.g. derive the canvas size, or build the PDF from the PNG)? | Samuel Ahuno | 2026-10-09 | open |
+| 4 | Unknown gene or unknown contig (`-r NOTAGENE123`, `NOSUCHCONTIG:1-100`): IGV 2.19.8 silently snapshots the **whole-genome view**, exit 0, nothing in igv0.log or stdout (probe 2026-09-25). igver can only warn. Validate contigs against the genome's .fai/chrom sizes in a later release? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 |
+| 5 | `-f pdf` is broken in 1.2.3 itself (pre-existing, outside the 12 audited bugs): IGV 2.19.8 SVGs have no width/height/viewBox, so cairosvg writes an 845-byte empty PDF and igver exits 1 (host); the image has no cairosvg at all. e2e R4 fails for this reason. Fix in 1.3.x (e.g. derive the canvas size, or build the PDF from the PNG)? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 |
 
 ## Decisions
 
