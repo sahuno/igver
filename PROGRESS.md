@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: 1.3.1 on branch fix/1.3.1: detect unknown gene/contig, fix -f pdf; user to pick a run-to-run variance approach
+next_action: User to pick a run-to-run variance approach (open unknown 3); recommendation: snapshot stability protocol
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -17,7 +17,7 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 
 ## Exact next steps
 
-0. Decide open unknowns 2–5 below (1.3.0 is released and deployed; B1 and C2/C4 are blocked only on unknowns 3 and 5).
+0. Pick a run-to-run variance approach (open unknown 3); everything else from the audit is released (1.3.1).
 1. When the RetroEM `03_igv_top_loci.sbatch` no longer names `igver_1.2.1_igv2.19.8.sif`, move that SIF to `images/archived/`
 2. Optional: add a stable `/opt/igv` symlink and default `igv_dir` to it, so the next IGV bump is a one-line Dockerfile change
 
@@ -27,9 +27,9 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 |---|---|---|---|---|
 | 1 | Swap shared `igver_latest.sif` to the IGV 2.19.8 build? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: yes |
 | 2 | Keep `IGV.Bounds=0,0,1150,800` in the bundled prefs template, or choose another snapshot size? (1150 px = the de-facto width of existing lab figures; plan says the user decides) | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: keep 1150x800 |
-| 3 | E1e (B1 determinism) is flaky against "< 0.5 % pixels differ": 4 identical runs differ 0.58–2.44 %, **only** in UI chrome (ruler/sequence band y≈100–120, 3-row dividers y≈130 and y≈333); the alignment area (y 136–330) is pixel-identical in every pair. Not downsampling (`SAM.DOWNSAMPLE_READS=false`: 1.16–2.44 %). `setSleepInterval 4000` → 0–0.58 % (one 3-row strip left) but costs ~4 s per batch command. E1e then passed in 2 of 6 later suite runs (host C2, release gate) and failed in 4 (0.58–2.43 %). Separately, a **header-repaint glitch** (ideogram/ruler overpainted by a shifted alignment panel) was seen once in ~109 fixed-code renders (image-mode E2b) and 0/20 in a 1.2.3 control, so its rate is not attributable. Accept chrome-only variance (and measure only the data area), adopt a sleep interval, or leave as is? | Samuel Ahuno | 2026-10-09 | open |
-| 4 | Unknown gene or unknown contig (`-r NOTAGENE123`, `NOSUCHCONTIG:1-100`): IGV 2.19.8 silently snapshots the **whole-genome view**, exit 0, nothing in igv0.log or stdout (probe 2026-09-25). igver can only warn. Validate contigs against the genome's .fai/chrom sizes in a later release? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 |
-| 5 | `-f pdf` is broken in 1.2.3 itself (pre-existing, outside the 12 audited bugs): IGV 2.19.8 SVGs have no width/height/viewBox, so cairosvg writes an 845-byte empty PDF and igver exits 1 (host); the image has no cairosvg at all. e2e R4 fails for this reason. Fix in 1.3.x (e.g. derive the canvas size, or build the PDF from the PNG)? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 |
+| 3 | E1e (B1 determinism) is flaky against "< 0.5 % pixels differ": 4 identical runs differ 0.58–2.44 %, **only** in UI chrome (ruler/sequence band y≈100–120, 3-row dividers y≈130 and y≈333); the alignment area (y 136–330) is pixel-identical in every pair. Not downsampling (`SAM.DOWNSAMPLE_READS=false`: 1.16–2.44 %). `setSleepInterval 4000` → 0–0.58 % (one 3-row strip left) but costs ~4 s per batch command. E1e then passed in 2 of 6 later suite runs (host C2, release gate) and failed in 4 (0.58–2.43 %). Separately, a **header-repaint glitch** (ideogram/ruler overpainted by a shifted alignment panel) was seen once in ~109 fixed-code renders (image-mode E2b) and 0/20 in a 1.2.3 control, so its rate is not attributable. Accept chrome-only variance (and measure only the data area), adopt a sleep interval, or leave as is? Recommended (2026-09-25): snapshot stability protocol — compare the 1.3.1 verification PNG with the real PNG and re-capture until two consecutive captures are identical (bounded); first step: measure their mismatch rate. | Samuel Ahuno | 2026-10-09 | open: user undecided |
+| 4 | Unknown gene or unknown contig (`-r NOTAGENE123`, `NOSUCHCONTIG:1-100`): IGV 2.19.8 silently snapshots the **whole-genome view**, exit 0, nothing in igv0.log or stdout (probe 2026-09-25). igver can only warn. Validate contigs against the genome's .fai/chrom sizes in a later release? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 — done, released 1.3.1 |
+| 5 | `-f pdf` is broken in 1.2.3 itself (pre-existing, outside the 12 audited bugs): IGV 2.19.8 SVGs have no width/height/viewBox, so cairosvg writes an 845-byte empty PDF and igver exits 1 (host); the image has no cairosvg at all. e2e R4 fails for this reason. Fix in 1.3.x (e.g. derive the canvas size, or build the PDF from the PNG)? | Samuel Ahuno | 2026-10-09 | decided 2026-09-25: fix in 1.3.1 — done, released 1.3.1 |
 
 ## Decisions
 
@@ -39,6 +39,16 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-25 22:05 · Claude Code · igver 1.3.1 released: unknown gene/contig detection, working -f pdf
+- **Done:** User decisions recorded (keep 1150x800; unknown locus + PDF in 1.3.1; variance undecided). Probes + javap of IGV 2.19.8: `goto` always returns OK; after a good region, an unknown gene/contig or a start beyond the chromosome end **keeps the previous view** (1.3.0 saved the previous region under the new name — seen in the U1a baseline PNG); a bare `snapshot` is named after IGV's current locus; `gotoimmediate All` resets the view; a split view drops a bad locus. Implemented per docs/plans/20260925_1_3_1_plan.md: per-region verification snapshot + reset, `_verify_loci()` (wrong snapshots deleted, exit 1 listing regions and what IGV showed), `ensure_svg_size()` (SVG width/height/viewBox from the verification PNG → real PDFs), `python-cairosvg` in the image. Cost ~0.1 s/region (20 regions: 26.4/26.9 s → 28.5/28.9 s).
+  - Unit: test/test_1_3_1.py 19/19 (13 failed on 1.3.0, 5 preservation passes); suite 209 passed, 1 skipped. Changed existing test: test_batch_chunking.py::test_split_batch_roundtrip (new block shape).
+  - e2e (5 new cases U1a–U1e; E5b now expects exit 1; R4 checks the PDF): baseline 1.3.0 2/7 pass per mode; full run at 6845feb host 32/33, image 31/33 (E1e variance; R4 needed the rebuilt image); **release gate on the pulled 1.3.1 SIF: 33/33** (R4 PDF 108,399 bytes, rasterises to 1150 px, opened). PNGs opened: U1a kept region, U1d TP53 (chr17), R4 PDF raster.
+  - Release: main 6845feb pushed, CI 36209224146 green; `igver_1.3.1_igv2.19.8.sif`: BUILD_SHA 6845feb, `igver 1.3.1`, cairosvg 2.9.1, no .git/BAM. `igver_latest.sif` → 1.3.1; 1.3.0 SIF → `archived/` (only this ledger and the plan referenced it). RetroEM still pins 1.2.1 (kept).
+- **Key paths:** igver/igver.py (`_records_to_batch` verify_dir, `_verify_loci`, `ensure_svg_size`, `_snapshot_name`, `run_igv`), docker/Dockerfile, test/test_1_3_1.py, test/e2e/cases.tsv (U1a–U1e, E5b, R4), test/e2e/e2e_runner.py (`pdf_width`, `tmp_clean` = igver_*), docs/plans/20260925_1_3_1_plan.md, README.md, CLAUDE.md, rules/igv.md; /data1/greenbab/software/images/igver_1.3.1_igv2.19.8.sif
+- **Commands that worked:** `javap -c -p -cp <extracted igv.jar classes> org.broad.igv.batch.CommandExecutor` (run inside the SIF, which has the JDK); gate: `sbatch ... test/e2e/run_e2e.sh image --no-repo-bind --sif /data1/greenbab/software/images/igver_1.3.1_igv2.19.8.sif --tag gate131`
+- **Known issues / blockers:** E1e run-to-run chrome variance still flaky (passed in the gate, failed in both full runs at 0.58 %): open unknown 3.
+- **Exact next steps:** see "Exact next steps" above.
 
 ### 2026-09-25 20:35 · Claude Code · igver 1.3.0 released: 12 audited bugs fixed (B1 and C2/C4 blocked on open unknowns 3/5)
 - **Done:** Executed docs/plans/20260925_audit_bugfix_plan.md. Commits on fix/audit-1.3.0, fast-forwarded to main at ba3e901 and pushed (main + branch). CI run 36203673348 green (3 min). Pulled `sahuno/igver:1.3.0`; release gate passed 27/28. `igver_latest.sif` → 1.3.0; the 1.2.3 SIF moved to `archived/` (the only references were this ledger and the plan). The 1.2.1 SIF stays: RetroEM's `03_igv_top_loci.sbatch` still pins it, so that job was not rerun (C6).
