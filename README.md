@@ -6,6 +6,17 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 > The methylation, parallel-rendering and PDF features documented below live in this fork.
 > PyPI's `igver` (1.1) is upstream and does **not** have them — see [Installation](#installation).
 
+**New in 1.3.1 (this fork):**
+- **Regions IGV cannot show are detected.** IGV's `goto` never reports failure: after an unknown gene or contig,
+  or a start beyond the chromosome end, it silently **keeps the previous region on screen** (1.3.0 saved that
+  under the new name), and a split view silently drops a bad locus. igver now takes a small verification
+  snapshot per region (IGV names it after the locus it actually shows) and resets the view after each region.
+  Wrong snapshots are deleted and igver exits 1 listing each region and what IGV showed; the correct snapshots
+  are kept. `-r All` (whole genome) is still allowed. Cost: ~0.1 s per region.
+- **`-f pdf` works**: IGV's SVGs get a width/height/viewBox (taken from the same view), so cairosvg writes a
+  real PDF; the page is the canvas at `--dpi` (1150 px at the default 300 dpi = 3.83 in). The image now
+  includes cairosvg. `-f svg` files carry their size too.
+
 **New in 1.3.0 (this fork)** — fixes for the 12 bugs of the 2026-09-25 audit. Behaviour changes:
 - **Your `~/igv` no longer affects screenshots.** Every IGV process gets a fresh, run-scoped IGV directory
   (`igver_igv_*` under `$TMPDIR`, else the output directory) with igver's bundled preferences
@@ -30,10 +41,10 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
   for `-g`. Relative genome files are made absolute and their directories bind-mounted.
 - Duplicate regions are rendered once (with a warning); every `.txt` item of `-i` is a track list (mixed
   with tracks too); paths with spaces are quoted; URL tracks (`https://`, `s3://` …) are passed through.
-- `-r <gene name>` warns: IGV 2.19.8 silently snapshots the **whole genome** for a name (or contig) it does not know.
+- `-r <gene name>` warns: IGV 2.19.8 silently snapshots the **whole genome** for a name (or contig) it does not know (1.3.1 turns this into an error).
 - The image is built from the commit being built (`/opt/igver/BUILD_SHA`), not from `main` HEAD.
-- **Known issue**: `-f pdf` does not work with IGV 2.19.8 (also in 1.2.x): its SVGs carry no size, so the
-  converted PDF is empty and igver exits 1. Use `-f svg` or PNG.
+- **Known issue (fixed in 1.3.1)**: `-f pdf` does not work with IGV 2.19.8 (also in 1.2.x): its SVGs carry no
+  size, so the converted PDF is empty and igver exits 1.
 
 **New in 1.2.3 (this fork):**
 - **Fixed**: `-d/--overlap-display` (default `squish`) is now applied to BAM/CRAM/SAM tracks by name. It used to be a bare IGV command that also squished the RefSeq gene track, which then filled the panel and hid every BED/annotation track below it. Annotation tracks now keep IGV's default (collapsed) layout.
@@ -61,6 +72,7 @@ Conveniently take IGV snapshots of multiple BAM/CRAM files over multiple genomic
 
 **Container versions:**
 - `sahuno/igver:latest` — most recent (recommended)
+- `sahuno/igver:1.3.1` — igver 1.3.1 with IGV 2.19.8; unknown regions detected, working `-f pdf`
 - `sahuno/igver:1.3.0` — igver 1.3.0 with IGV 2.19.8; run-scoped IGV preferences, pre-flight checks, region grammar
 - `sahuno/igver:1.2.3` — igver 1.2.3 with IGV 2.19.8; `-d` no longer hides BED tracks
 - `sahuno/igver:1.2.2` — igver 1.2.2 with IGV 2.19.8 and refreshed genome definitions
@@ -350,8 +362,8 @@ igver.run_igv(batch_file, output_paths, use_singularity=False)
 - **SVG**: vector, written directly by IGV
 - **PDF**: IGV writes SVG, then igver converts it with `cairosvg` (`pip install cairosvg`).
   Via the CLI the intermediate `.svg` files are **kept** next to the `.pdf`s.
-  **Currently broken with IGV 2.19.8** (1.2.x too): its SVGs have no width/height/viewBox, so cairosvg
-  writes an empty PDF and igver exits 1; the image also lacks cairosvg. Use `-f svg`.
+  IGV 2.19.8 writes SVGs without a size; igver adds the view's width/height/viewBox before converting
+  (≤ 1.3.0 wrote an empty PDF). The PDF page is the canvas at `--dpi`: 1150 px at 300 dpi = 3.83 in.
 
 ## Output File Naming
 
@@ -665,8 +677,10 @@ igver -i ont_reads.bam -r regions.bed -d expand -p 1000 --dpi 600 -o ./screensho
 - **`Failed to generate all PNG files after 2 iterations`**: igver keeps the batch script for the
   regions that failed and that run's IGV directory (`igver_igv_*`) — both paths and the IGV log's
   errors are in the error message. Rerun with `--debug` to see IGV's console output.
-- **Whole-genome view instead of the region**: IGV did not know the gene or contig name. Check
-  chromosome naming (`chr1` vs `1`) against the BAM header and the genome.
+- **`IGV did not show these regions`** (exit 1): IGV did not know the gene or contig, or the start lies
+  beyond the chromosome end; the message says what IGV showed instead, and those snapshots are deleted.
+  Check chromosome naming (`chr1` vs `1`) against the BAM header and the genome. (≤ 1.3.0 silently saved
+  the previous region, or the whole genome, under the new name.)
 - **No screenshots generated**:
   - Check chromosome naming (`chr1` vs `1`)
   - Check output directory permissions

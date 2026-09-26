@@ -280,11 +280,16 @@ Run tests with: `pytest test/test_cli.py`
 - **Blocks on a dialog (hang)**: missing BAM index, 404 track URL, dead-URL genome JSON. The first is
   caught by the pre-flight; the others end in `--stall-timeout`.
 - **No dialog, renders**: index older than the BAM, corrupt BAM, unknown track extension.
-- **Silently wrong**: an unknown gene or contig snapshots the **whole-genome view** with exit 0 and
-  nothing in the log; igver can only warn for non-locus `-r` strings.
+- **Silently wrong**: `goto` always returns OK. After an unknown gene/contig or a start beyond the
+  chromosome end IGV **keeps the previous view** (whole genome only for the first region); a split view drops
+  a bad locus. 1.3.1 detects this: each block writes a bare `snapshot` (IGV names it after the current locus,
+  e.g. `chr8_32,534,767_32,536,767.png`, `a | b.png`, `All_1_3,095,677.png`) into `igver_verify_*/<i>` and
+  ends with `gotoimmediate All`; `_verify_loci()` in `run_igv` deletes wrong snapshots and igver exits 1.
+  Blocks therefore end `snapshot <name>` + `gotoimmediate All`: `_snapshot_name()` reads the last `snapshot ` line.
 - **Run-to-run variance**: identical runs differ in 0.6–2.4 % of pixels, all in UI chrome (ruler band,
   dividers); the data area is identical. A rare header-repaint glitch has been seen (1 in ~45 renders).
-- **`-f pdf`**: IGV 2.19.8 SVGs have no size, so cairosvg writes an empty PDF (broken since 1.2.x).
+- **`-f pdf`**: IGV 2.19.8 SVGs have no size; `ensure_svg_size()` adds it from the verification PNG (1.3.1),
+  otherwise cairosvg writes an empty PDF. The PDF page is the canvas at `--dpi`.
 
 ### Testing the Audit Fixes
 - Unit: `test/test_audit_1_3_0.py` (one class per bug, B1–B12).

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='igver',
-    version='1.3.0',
+    version='1.3.1',
     packages=find_packages(),
     package_data={
         'igver': ['data/genome_map.yaml', 'data/igv_prefs.properties'],
