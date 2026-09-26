@@ -255,10 +255,10 @@ docker/Dockerfile`), `COPY` the package (`setup.py`, `igver/`, `requirements.txt
 and any hidden scratch directories). Record the commit SHA in the image (build-arg `GIT_SHA` →
 `LABEL org.opencontainers.image.revision` and `/opt/igver/BUILD_SHA`).
 **Done when.**
-- [ ] CI run for the merge commit is green.
-- [ ] `apptainer exec <new sif> cat /opt/igver/BUILD_SHA` equals the merge commit SHA, and
+- [x] CI run for the merge commit is green.
+- [x] `apptainer exec <new sif> cat /opt/igver/BUILD_SHA` equals the merge commit SHA, and
       `igver --version` equals `setup.py`'s version.
-- [ ] The image contains no `.git` directory and no test BAMs (`apptainer exec <sif> ls -a /opt/igver`).
+- [x] The image contains no `.git` directory and no test BAMs (`apptainer exec <sif> ls -a /opt/igver`).
 
 ### B11 (S3, repro) — `-j` processes share `~/igv` (log rotation, port clash)
 Fixed by B1's per-process run directory and `PORT_ENABLED=false`.
@@ -447,12 +447,12 @@ Phase A
 
 Phase B (tick each bug only when all of its "Done when" boxes in §2 are ticked)
 - [ ] B1 (blocked: E1e determinism, open unknown 3)  [x] B2  [x] B3  [x] B4  [x] B5  [x] B6
-- [x] B7  [x] B8  [x] B9  [ ] B10 (after CI)  [x] B11 [x] B12
+- [x] B7  [x] B8  [x] B9  [x] B10  [x] B11 [x] B12
 
 Phase C
-- [x] C1 docs updated  [ ] C2 suites green both modes (blocked: host 27/28, image 26/28 at 3646d98; E1e = open unknown 3, R4 = open unknown 5)  [ ] C3 merged, CI green
-- [ ] C4 release-gate e2e on pulled SIF  [ ] C5 `igver_latest.sif` repointed, old SIF archived
-- [ ] C7 PROGRESS.md final entry pushed
+- [x] C1 docs updated  [ ] C2 suites green both modes (blocked: host 27/28, image 26/28 at 3646d98; E1e = open unknown 3, R4 = open unknown 5)  [x] C3 merged, CI green
+- [ ] C4 release-gate e2e on pulled SIF (blocked: 27/28, R4 = open unknown 5)  [x] C5 `igver_latest.sif` repointed, old SIF archived
+- [x] C7 PROGRESS.md final entry pushed
 
 ## Design changes
 (append here: date, item, what changed, why)
