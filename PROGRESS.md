@@ -3,7 +3,7 @@ project: igver
 status: active
 owner: Samuel Ahuno
 team: greenbab lab igver users
-next_action: User to pick a run-to-run variance approach (open unknown 3); recommendation: snapshot stability protocol
+next_action: Resume feat/stable-snapshots (docs/plans/20260925_stable_snapshots_plan.md, see its last design-change entry)
 blockers: none
 updated: 2026-09-25
 shared_copy: none
@@ -39,6 +39,12 @@ container `sahuno/igver` is built by GitHub Actions on every push to `main`.
 - 2026-09-25 · Bumped igver to 1.2.1 with IGV 2.19.8 · CI tags the image with the setup.py version, so leaving it at 1.2.0 would have overwritten the `sahuno/igver:1.2.0` tag · by Samuel Ahuno
 
 ## Log
+
+### 2026-09-26 · Claude Code · Stability protocol WIP paused (usage limit); not released
+- **Done:** Branch feat/stable-snapshots: verification + post (and SVG pre) captures, `_unstable_blocks`, up to 2 re-render passes, `--settle-ms`, `_wait()` (IGV 2.19.8 has no `sleep` command; waits are `setSleepInterval W` + `setSleepInterval 0`). Tests: test/test_stable_snapshots.py; e2e S1/S2, E1e `identical_to`; unit suite 222 passed, 1 skipped. Probes 9–18 in test/e2e/out/probes.
+- **Key finding:** run-to-run variance comes from the scroll viewport of an alignment panel whose reads overflow `maxPanelHeight`: its 3-px divider (y≈333) takes several states asynchronously. Capture timing cannot fix it (probe 18: 5–6 states per 12 processes); with no overflow the output is one state.
+- **Known issues:** WIP is not reproducible for overflowing panels and costs ~+35 % plus re-render passes; do not merge as is. 1.3.1 on main is untouched and deployed.
+- **Exact next steps:** (1) inspect IGV MainPanel/DataPanelContainer offscreen painting (classes extracted in the session scratchpad; re-extract from /opt/IGV_2.19.8/lib/igv.jar); (2) choose between opt-in fit-to-content height, uncapped-render-and-splice, or an IGV patch; (3) rework block + tests; (4) full e2e both modes, release 1.4.0.
 
 ### 2026-09-25 22:05 · Claude Code · igver 1.3.1 released: unknown gene/contig detection, working -f pdf
 - **Done:** User decisions recorded (keep 1150x800; unknown locus + PDF in 1.3.1; variance undecided). Probes + javap of IGV 2.19.8: `goto` always returns OK; after a good region, an unknown gene/contig or a start beyond the chromosome end **keeps the previous view** (1.3.0 saved the previous region under the new name — seen in the U1a baseline PNG); a bare `snapshot` is named after IGV's current locus; `gotoimmediate All` resets the view; a split view drops a bad locus. Implemented per docs/plans/20260925_1_3_1_plan.md: per-region verification snapshot + reset, `_verify_loci()` (wrong snapshots deleted, exit 1 listing regions and what IGV showed), `ensure_svg_size()` (SVG width/height/viewBox from the verification PNG → real PDFs), `python-cairosvg` in the image. Cost ~0.1 s/region (20 regions: 26.4/26.9 s → 28.5/28.9 s).

@@ -35,9 +35,9 @@ def test_split_batch_roundtrip(tmp_path):
     assert header[0] == 'new' and any(line.startswith('load ') for line in header)
     assert len(blocks) == 3
     assert [_snapshot_name(b) for b in blocks] == [os.path.basename(p) for p in png_paths]
-    # igver 1.3.1: each block ends with its snapshot and then the `gotoimmediate All` view reset
-    assert all(b[0].startswith('goto ') and b[-2].startswith('snapshot ') and b[-1] == 'gotoimmediate All'
-               for b in blocks)
+    # igver 1.4.0: each block writes its snapshot, then a stability capture, then resets the view
+    assert all(b[0].startswith('goto ') and f'snapshot {_snapshot_name(b)}' in b
+               and b[-3] == 'snapshot igver_post.png' and b[-1] == 'gotoimmediate All' for b in blocks)
     out = tmp_path / 'rt.batch'
     _write_batch(str(out), header, blocks)
     assert out.read_text() == text

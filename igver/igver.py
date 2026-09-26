@@ -16,7 +16,7 @@ try:
 except ImportError:
     import importlib_resources as resources  # Backport for Python 3.7-3.8
 
-from PIL import Image
+from PIL import Image, ImageChops
 import matplotlib.pyplot as plt
 try:
     import cairosvg
@@ -216,6 +216,7 @@ def load_screenshots(paths, regions, output_dir='/tmp', genome="hg19", igv_dir="
 LOCUS_RE = re.compile(r'^(.+):([0-9][0-9,]*)-([0-9][0-9,]*)$')
 UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._+=,-]')
 MAX_FILENAME_BYTES = 200
+DEFAULT_SETTLE_MS = 250
 # A -r argument with one of these endings (or a '/') names a file, never a locus or gene
 REGION_FILE_EXTENSIONS = ('.bed', '.bed.gz', '.txt', '.tsv', '.csv')
 
@@ -456,7 +457,7 @@ def _string_records(region, tag=None):
 
 
 def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_height=200,
-                      additional_pref=None, output_format='png', verify_dir=None):
+                      additional_pref=None, output_format='png', verify_dir=None, settle_ms=DEFAULT_SETTLE_MS):
     """
     Turn region records into snapshot paths and batch lines.
 
@@ -469,8 +470,11 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         output_format (str): 'png', 'svg' or 'pdf' (pdf is written by IGV as svg).
         verify_dir (str, optional): When given, each region also writes a bare `snapshot` into
             `<verify_dir>/<index>/` (IGV names it after the locus it actually shows, see
-            _verify_loci) before its real snapshot, and ends with `gotoimmediate All`, so a failed
-            `goto` of the next region lands on the whole genome instead of keeping this view.
+            _verify_loci) before its real snapshot, a stability capture after it (and one before
+            an SVG), and ends with `gotoimmediate All`, so a failed `goto` of the next region
+            lands on the whole genome instead of keeping this view.
+        settle_ms (int, optional): Wait after the first capture of a view, before the re-layout and
+            the real snapshot, so the reads have loaded (default: 250).
 
     Returns:
         (list of str, list of str): Snapshot paths and batch lines. Exact duplicates (same locus,
@@ -505,11 +509,24 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         if verify_dir:
             region_verify_dir = os.path.join(verify_dir, str(len(png_paths) - 1))
             os.makedirs(region_verify_dir, exist_ok=True)  # IGV refuses a missing snapshotDirectory
-            region_content += [f'snapshotDirectory {_batch_arg(region_verify_dir)}', 'snapshot',
-                               f'snapshotDirectory {_batch_arg(os.path.abspath(output_dir))}']
+            to_verify = f'snapshotDirectory {_batch_arg(region_verify_dir)}'
+            to_output = f'snapshotDirectory {_batch_arg(os.path.abspath(output_dir))}'
+            # Let the reads load, then re-apply the layout and capture right away. When the reads overflow
+            # maxPanelHeight, the panel's scroll viewport repaints asynchronously and its divider flips
+            # between two states over seconds (probes 13-16: never with maxPanelHeight 2000); a capture
+            # right after the re-layout always sees the same state (probe 12: 24/24 identical).
+            region_content += [to_verify, 'snapshot'] + _wait(settle_ms)
+            if overlap_display and overlap_display != 'expand':
+                region_content.append(overlap_display)
+            region_content.append(f'maxPanelHeight {max_panel_height}')
+            if ext == 'svg':  # a vector snapshot cannot be compared: bracket it with two PNG captures
+                region_content.append(f'snapshot {PRE_CAPTURE}')
+            region_content.append(to_output)
         region_content.append(f'snapshot {png_fname}')
         if verify_dir:
-            region_content.append('gotoimmediate All')
+            # the next capture of the same view equal to the real snapshot (PNG) or to the pre capture
+            # (SVG) means the view had finished painting (see _unstable_blocks)
+            region_content += [to_verify, f'snapshot {POST_CAPTURE}', to_output, 'gotoimmediate All']
     if duplicates:
         print(f"[WARNING] Dropped {len(duplicates)} duplicate region(s) (same locus and snapshot name): "
               f"{', '.join(duplicates)}")
@@ -719,7 +736,8 @@ def find_missing_indexes(paths):
 
 
 def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max_panel_height=200,
-                        overlap_display='squish', igv_config=None, color_by=None, output_format='png'):
+                        overlap_display='squish', igv_config=None, color_by=None, output_format='png',
+                        settle_ms=DEFAULT_SETTLE_MS):
     """
     Creates an IGV batch script to generate screenshots for the given BAM files and regions.
 
@@ -790,7 +808,7 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
         png_paths, region_content = _get_paths_and_regions(regions,
             output_dir=output_dir, overlap_display=_display_commands(paths, overlap_display),
             max_panel_height=max_panel_height, additional_pref=additional_pref, tag=tag,
-            output_format=output_format, verify_dir=verify_dir)
+            output_format=output_format, verify_dir=verify_dir, settle_ms=settle_ms)
     except Exception:
         shutil.rmtree(verify_dir, ignore_errors=True)
         raise
@@ -878,10 +896,93 @@ def _write_batch(path, header, blocks):
         f.write('\n'.join(header + [line for block in blocks for line in block] + ['exit']))
 
 
+PRE_CAPTURE, POST_CAPTURE = 'igver_pre.png', 'igver_post.png'
+STABILITY_CAPTURES = (PRE_CAPTURE, POST_CAPTURE)
+MAX_STABILITY_PASSES = 2
+
+
 def _snapshot_name(block):
-    """Return the snapshot filename a region block writes (its last `snapshot <name>` line)."""
-    line = next(line for line in reversed(block) if line.startswith('snapshot '))
+    """Return the snapshot filename a region block writes (its last `snapshot <name>`, not a stability capture)."""
+    line = next(line for line in reversed(block)
+                if line.startswith('snapshot ') and line[len('snapshot '):].strip() not in STABILITY_CAPTURES)
     return line[len('snapshot '):].strip()
+
+
+def images_identical(path_a, path_b):
+    """
+    True when two images have the same size and identical RGB pixels.
+
+    Example:
+        >>> images_identical('real.png', 'igver_post.png')
+        True
+    """
+    with Image.open(path_a) as a, Image.open(path_b) as b:
+        if a.size != b.size:
+            return False
+        return ImageChops.difference(a.convert('RGB'), b.convert('RGB')).getbbox() is None
+
+
+def _wait(ms):
+    """
+    Batch lines that make IGV wait `ms` milliseconds once.
+
+    IGV 2.19.8 has no `sleep` batch command (it answers "UNKOWN COMMAND"); instead it sleeps
+    `sleepInterval` ms after every command. Setting the interval and resetting it right away sleeps
+    exactly once: after the first line (the reset line runs with the new value 0).
+
+    Example:
+        >>> _wait(250)
+        ['setSleepInterval 250', 'setSleepInterval 0']
+    """
+    return [f'setSleepInterval {ms}', 'setSleepInterval 0'] if ms > 0 else []
+
+
+def _longer_settle(block, factor=4, minimum_ms=1000):
+    """Copy of a region block whose settle waits are `factor` times longer (at least `minimum_ms`)."""
+    out = []
+    for line in block:
+        if line.startswith('setSleepInterval ') and int(line.split()[1]) > 0:
+            line = f'setSleepInterval {max(int(line.split()[1]) * factor, minimum_ms)}'
+        out.append(line)
+    return out
+
+
+def _unstable_blocks(blocks, output_dir):
+    """
+    Region blocks whose real snapshot was taken before IGV had finished painting the view.
+
+    Only the first capture of a view is ever unsettled, and settled captures are pixel-identical
+    across IGV processes (probe 2026-09-25), so a real PNG equal to the next capture of the same
+    view is reproducible. An SVG counts as settled when the PNG captures before and after it agree.
+    Blocks without the needed captures cannot be checked and are not reported.
+
+    Parameters:
+        blocks (list of list of str): Region blocks (see _split_batch).
+        output_dir (str): Directory of the real snapshots.
+
+    Returns:
+        list of list of str: The unstable blocks.
+
+    Example:
+        >>> _unstable_blocks(blocks, '/out')  # real 8-1-100.png differs from its igver_post.png
+        [['goto 8:1-100', ..., 'gotoimmediate All']]
+    """
+    unstable = []
+    for block in blocks:
+        verify = _block_verify_dir(block)
+        real = os.path.join(output_dir, _snapshot_name(block))
+        if verify is None or not os.path.exists(real):
+            continue
+        post = os.path.join(verify, POST_CAPTURE)
+        first = real if real.endswith('.png') else os.path.join(verify, PRE_CAPTURE)
+        if not (os.path.exists(post) and os.path.exists(first)):
+            continue
+        try:
+            if not images_identical(first, post):
+                unstable.append(block)
+        except OSError:  # not a readable image (e.g. a test stub): cannot judge
+            continue
+    return unstable
 
 
 WHOLE_GENOME_LOCUS = re.compile(r'^All(_[\d,]+_[\d,]+)?$')
@@ -955,7 +1056,8 @@ def _verify_loci(blocks, output_dir):
         snapshot = os.path.join(output_dir, name)
         if verify is None or not os.path.exists(snapshot):
             continue
-        pngs = sorted((p for p in os.listdir(verify) if p.endswith('.png')) if os.path.isdir(verify) else [],
+        pngs = sorted((p for p in os.listdir(verify) if p.endswith('.png') and p not in STABILITY_CAPTURES)
+                      if os.path.isdir(verify) else [],
                       key=lambda p: os.path.getmtime(os.path.join(verify, p)))
         if not pngs:
             unverified.append(name)
@@ -1239,7 +1341,7 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
 
     # Run IGV; on retry, rewrite the batch to cover only the regions still missing
     with open(batch_script) as f:
-        _, all_blocks = _split_batch(f.read())
+        batch_header, all_blocks = _split_batch(f.read())
     max_iter = 2
     run_dir = None
     for n_iter in range(max_iter):
@@ -1264,6 +1366,48 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
                   f"IGV directory {run_dir}")
             print(f"[LOG:{time.ctime()}] Running IGV command:\n{cmd}")
         _run_until_stalled(cmd, png_paths, stall_timeout, debug)
+
+    # Stability passes: re-render regions whose real snapshot was taken before the view settled
+    rerendered, still_unstable = set(), []
+    if png_paths and all(os.path.exists(png) for png in png_paths):
+        out_dir = os.path.dirname(png_paths[0])
+        for n_pass in range(MAX_STABILITY_PASSES):
+            unstable = _unstable_blocks(all_blocks, out_dir)
+            if not unstable:
+                break
+            backups = {}
+            for block in unstable:
+                name = _snapshot_name(block)
+                rerendered.add(name)
+                verify = _block_verify_dir(block)
+                _clear_dir(verify)  # the new captures must not be compared with the old ones
+                backups[os.path.join(out_dir, name)] = os.path.join(verify, 'igver_backup_' + name)
+            for real, backup in backups.items():
+                shutil.move(real, backup)  # kept until the re-render has replaced it
+            _write_batch(batch_script, batch_header, [_longer_settle(b) for b in unstable])
+            pass_dir = _make_igv_run_dir(run_dir_base, genome=genome, igv_prefs=igv_prefs)
+            if debug:
+                print(f"[LOG:{time.ctime()}] Stability pass #{n_pass + 1}: re-rendering {len(unstable)} "
+                      f"snapshot(s) with longer settle waits; IGV directory {pass_dir}")
+            _run_until_stalled(_command(pass_dir), list(backups), stall_timeout, debug)
+            lost = [real for real in backups if not os.path.exists(real)]
+            for real, backup in backups.items():
+                if real in lost:
+                    shutil.move(backup, real)  # the re-render failed: keep the unsettled capture
+                else:
+                    os.remove(backup)
+            if lost:
+                print(f"[WARNING:{time.ctime()}] stability re-render did not write {len(lost)} snapshot(s); "
+                      f"kept the earlier capture. IGV log errors from {pass_dir}:\n{_igv_log_excerpt(pass_dir)}",
+                      file=sys.stderr)
+            shutil.rmtree(pass_dir, ignore_errors=True)
+        still_unstable = [_snapshot_name(b) for b in _unstable_blocks(all_blocks, out_dir)]
+    if rerendered:
+        print(f"[INFO] Re-rendered {len(rerendered)} of {len(png_paths)} snapshot(s) whose first capture was "
+              f"taken before IGV had finished painting the view")
+    if still_unstable:
+        print(f"[WARNING] {len(still_unstable)} snapshot(s) not stable after {MAX_STABILITY_PASSES} re-renders "
+              f"(kept the last capture; it may differ between runs): {', '.join(still_unstable)}", file=sys.stderr)
 
     # Only now (after the retries) check what IGV showed: a wrong snapshot deleted inside the loop
     # would be re-queued and fail the same way

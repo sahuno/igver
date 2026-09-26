@@ -94,6 +94,12 @@ def parse_args():
              "after igver's bundled template. Each run uses a fresh IGV directory, so ~/igv is never read."
     )
     parser.add_argument(
+        "--settle-ms", type=int, default=250, metavar="MS",
+        help="Wait after the first capture of each view so the reads have loaded; igver then re-applies the "
+             "layout, snapshots, and checks the snapshot against an immediate second capture. A snapshot that "
+             "differs is re-rendered with a 4x longer wait (default: 250). Output is reproducible run to run."
+    )
+    parser.add_argument(
         "-j", "--jobs", type=int, default=1,
         help="Number of IGV processes to run in parallel; regions are split into this many chunks. "
              "Each process starts its own JVM, so budget memory accordingly (default: 1)."
@@ -247,6 +253,10 @@ def main():
         )
         sys.exit(1)
 
+    if args.settle_ms < 0:
+        print("[ERROR] --settle-ms must be >= 0", file=sys.stderr)
+        sys.exit(1)
+
     igv_prefs = None
     if args.igv_prefs:
         try:
@@ -306,6 +316,7 @@ def main():
             "jobs": args.jobs,
             "stall_timeout": args.stall_timeout,
             "igv_prefs": igv_prefs,
+            "settle_ms": args.settle_ms,
         }
         _ = load_screenshots(**kwargs)
 

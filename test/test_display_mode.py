@@ -55,4 +55,7 @@ class TestBatchScript:
     def test_mode_emitted_per_region(self, tmp_path, mode):
         lines = _batch_lines(tmp_path, ['/d/s1.bam'], ['chr1:100-200', 'chr2:300-400'],
                              overlap_display=mode)
-        assert lines.count(f'{mode} s1.bam') == 2
+        # igver 1.4.0: applied in every region block twice (initial layout + re-layout once loaded)
+        _, blocks = igver._split_batch('\n'.join(lines))
+        assert len(blocks) == 2 and all(b.count(f'{mode} s1.bam') == 2 for b in blocks)
+        assert lines.count(f'{mode} s1.bam') == 4 and mode not in lines  # never a bare command

@@ -1,7 +1,7 @@
 # igver 1.4.0 plan: stable, reproducible snapshots (run-to-run variance)
 
 Author: Samuel Ahuno (plan drafted with Claude Code), 2026-09-25
-Status: IN PROGRESS on branch `feat/stable-snapshots`. Ground rules as in `20260925_audit_bugfix_plan.md` §0.
+Status: PAUSED 2026-09-26 (usage limit), WIP on branch `feat/stable-snapshots`, not released. Ground rules as in `20260925_audit_bugfix_plan.md` §0.
 Decision (user asked Claude to choose the most ambitious option, 2026-09-25): **snapshot stability protocol**,
 aiming at pixel-identical output across runs, not just "less variance". An upstream IGV repaint patch was
 not chosen: it means building and maintaining a forked IGV in the image, and the protocol below reaches the
@@ -39,3 +39,27 @@ The warning includes the fraction of regions that needed a re-render, so the rat
 
 ## Design changes
 (append here: date, item, what changed, why)
+- 2026-09-25 · First implementation (real snapshot vs back-to-back post capture) still left S1 differing:
+  a 3-px strip at y≈333 (the divider under the alignment panel) had **two stable states** (probe 12: 1 of 24
+  renders in the odd state), so no pair of captures could flag it.
+- 2026-09-25 · IGV 2.19.8 has **no `sleep` batch command** (the log shows `UNKOWN COMMAND: sleep 100`); the
+  earlier "settle waits" only added repaints. A real wait is `setSleepInterval W` + `setSleepInterval 0`
+  (IGV sleeps `sleepInterval` after every command). Probes 9–11 timing conclusions were therefore about
+  repaint counts, not time; their cross-process identity results stand.
+- 2026-09-25 · With real waits between the real snapshot and the post capture, the strip kept flipping for
+  seconds (probe 13), causing needless re-renders (20 regions: 78 s vs 31 s). `scrollToTop`/`tweakdivider`
+  do not help (probe 14). **Root cause (probe 16):** with `maxPanelHeight 2000` (no scrolling) there are 0
+  changes over time and one state per region in all 16 captures; the flips come from the scroll viewport of a
+  panel whose reads overflow `maxPanelHeight`, which repaints asynchronously.
+- 2026-09-25 · Final block: first capture (locus) · real wait `--settle-ms` (reads load) · re-apply the display
+  mode and `maxPanelHeight` · [SVG: pre capture] · real snapshot · post capture immediately · reset. A capture right
+  after the re-layout sees one state (probe 12: 24/24). Re-renders use a 4× longer wait (min 1 s).
+  New CLI option `--settle-ms` (default 250).
+- 2026-09-26 · **Controlled probe 18 (dedicated node, 12 processes × 3 regions) overturns the capture-timing
+  design.** Regions whose reads overflow `maxPanelHeight 200`: 5–6 distinct renderings per 12 and real≠post in
+  8–9/12, with or without a wait; some differing renders have real==post, so "identical unless flagged" does not
+  hold. Region whose reads fit: 1 rendering, 0 unstable. Uncapped (`maxPanelHeight 2000`): 1 rendering (one
+  outlier, flagged). Earlier 24/24 and S1 5/5 results were luck on a busy node. Conclusion: reproducibility
+  needs the overflow removed at the source. Next: read IGV's offscreen snapshot painting (MainPanel /
+  DataPanelContainer) to see what paints the divider strip; candidate designs: (1) opt-in fit-to-content panel
+  height (deterministic, taller images), (2) render uncapped and splice to the capped layout, (3) patch IGV.

@@ -115,13 +115,18 @@ class TestU1BatchShape:
         for i, block in enumerate(blocks):
             assert block[0].startswith('goto ')
             assert block[-1] == 'gotoimmediate All'
-            assert block[-2] == f'snapshot {os.path.basename(png[i])}'
+            # 1.4.0: the real snapshot is followed by a stability capture in the verification dir
+            r = block.index(f'snapshot {os.path.basename(png[i])}')
+            assert block[r + 2] == 'snapshot igver_post.png' and block[-2] == block[r - 1]
             v = block.index('snapshot')
             verify_dir = shlex.split(block[v - 1])[1]
             assert block[v - 1].startswith('snapshotDirectory ') and os.path.isdir(verify_dir)
             assert os.path.basename(verify_dir) == str(i)
             assert os.path.basename(os.path.dirname(verify_dir)).startswith('igver_verify_')
-            assert block[v + 1] == f'snapshotDirectory {os.path.abspath(tmp_path / "o")}'
+            # 1.4.0: a settle wait follows the verification snapshot; the switch back to the output
+            # directory comes right before the real snapshot
+            assert block[v + 1:v + 3] == ['setSleepInterval 250', 'setSleepInterval 0']
+            assert block[r - 1] == f'snapshotDirectory {os.path.abspath(tmp_path / "o")}'
 
     def test_snapshot_name_with_trailing_reset(self):
         block = ['goto chr1:1-2', 'snapshotDirectory /v/0', 'snapshot', 'snapshotDirectory /o',

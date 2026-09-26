@@ -112,8 +112,13 @@ class TestBlockShape:
         block = self._blocks(tmp_path, monkeypatch, 'png')[0]
         i = block.index('snapshot 8-1-100.png')
         assert block[i + 1].startswith('snapshotDirectory ') and 'igver_verify_' in block[i + 1]
-        assert block[i + 2] == 'snapshot igver_post.png'
+        wait = ['setSleepInterval 250', 'setSleepInterval 0']  # IGV has no `sleep` batch command
+        assert block[i + 2] == 'snapshot igver_post.png'  # checked right after the real snapshot
         assert block[i + 3].startswith('snapshotDirectory ') and block[-1] == 'gotoimmediate All'
+        v = block.index('snapshot')
+        assert block[v + 1:v + 3] == wait  # let the reads load
+        # then re-apply the layout and capture right away
+        assert block[v + 3:i - 1] == ['squish test_tumor.bam', 'maxPanelHeight 200']
         assert core._snapshot_name(block) == '8-1-100.png'
 
     def test_svg_block_has_pre_and_post_captures(self, tmp_path, monkeypatch):
@@ -121,6 +126,34 @@ class TestBlockShape:
         i = block.index('snapshot 8-1-100.svg')
         assert 'snapshot igver_pre.png' in block[:i] and 'snapshot igver_post.png' in block[i:]
         assert core._snapshot_name(block) == '8-1-100.svg'
+
+
+class TestSettle:
+
+    def test_settle_ms_option_reaches_the_batch(self, tmp_path, monkeypatch):
+        seen = []
+
+        def spy(cmd, png_paths, stall_timeout, debug=False):
+            seen.append(open(shlex.split(cmd.split(' -b ', 1)[1])[0]).read())
+            return _fake_igv()(cmd, png_paths, stall_timeout, debug)
+        code, _ = _run(['-i', str(TEST_BAM), '-r', '8:1-100', '-o', str(tmp_path / 'o'), '--settle-ms', '40']
+                       + ARGS, spy, tmp_path, monkeypatch)
+        assert code == 0 and seen[0].count('setSleepInterval 40') == 1
+
+    def test_rerender_uses_longer_settle(self, tmp_path, monkeypatch):
+        seen = []
+        base = _fake_igv(lambda call, goto, k: call == 1 and k == 2)
+
+        def spy(cmd, png_paths, stall_timeout, debug=False):
+            seen.append(open(shlex.split(cmd.split(' -b ', 1)[1])[0]).read())
+            return base(cmd, png_paths, stall_timeout, debug)
+        _run(['-i', str(TEST_BAM), '-r', '8:1-100', '-o', str(tmp_path / 'o')] + ARGS, spy, tmp_path, monkeypatch)
+        assert len(seen) == 2 and seen[1].count('setSleepInterval 1000') == 1 and 'setSleepInterval 250' not in seen[1]
+
+    def test_negative_settle_rejected(self, tmp_path, monkeypatch):
+        code, mock = _run(['-i', str(TEST_BAM), '-r', '8:1-100', '-o', str(tmp_path / 'o'), '--settle-ms', '-1']
+                          + ARGS, _fake_igv(), tmp_path, monkeypatch)
+        assert code == 1 and mock.call_count == 0
 
 
 class TestStability:

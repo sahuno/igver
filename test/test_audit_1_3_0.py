@@ -580,7 +580,8 @@ class TestB6Duplicates:
     def test_batch_has_no_duplicate_snapshots(self, tmp_path):
         bed = _write(tmp_path / 'd.hg19.bed', 'chr1\t100\t200\ta\nchr1\t100\t200\ta\n')
         batch, png = core.create_batch_script([str(TEST_BAM)], [bed], str(tmp_path))
-        snaps = [line for line in open(batch).read().splitlines() if line.startswith('snapshot ')]
+        snaps = [line for line in open(batch).read().splitlines()
+                 if line.startswith('snapshot ') and 'igver_' not in line]  # not the 1.4.0 stability capture
         assert len(snaps) == len(set(snaps)) == 1 and len(png) == 1
 
     def test_same_filename_different_locus_raises(self, tmp_path):

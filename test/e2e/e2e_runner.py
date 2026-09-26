@@ -227,10 +227,15 @@ def run_case(case, mode, sif, bind_repo, outroot, done):
                 os.makedirs(rep)
                 rcmd = [rep if c == out else c for c in cmd]
                 r = subprocess.run(rcmd, cwd=FIX, env=env, capture_output=True, timeout=max_s + 60)
+                rep_output = (r.stdout + r.stderr).decode(errors='replace')
+                with open(rep + '.output.txt', 'w') as f:
+                    f.write(shlex.join(rcmd) + '\n\n' + rep_output)
+                flagged = 'not stable' in rep_output
                 digests = {f: hashlib.md5(open(os.path.join(rep, f), 'rb').read()).hexdigest()
                            for f in sorted(os.listdir(rep)) if not BATCH_RE.match(f)}
                 differ = [f for f in first if digests.get(f) != first[f]]
-                print(f'    {cid} run {n}: exit {r.returncode}, {len(digests)} files, {len(differ)} differ from run 1')
+                print(f'    {cid} run {n}: exit {r.returncode}, {len(digests)} files, {len(differ)} differ from run 1'
+                      f'{", flagged not stable" if flagged else ""}')
                 if r.returncode or differ or set(digests) != set(first):
                     fails.append(f'run {n}: exit {r.returncode}, differing {differ}')
         elif kind == 'svg_sized':
