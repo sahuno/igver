@@ -451,14 +451,12 @@ def _string_records(region, tag=None):
     if len(tokens) != 1:
         raise ValueError(f"Region '{region}' is neither chr:start-end loci (several = split view) nor a "
                          f"single feature name")
-    # IGV 2.19.8 snapshots the whole-genome view, silently, for a name or contig it does not know
-    print(f"[WARNING] '{region}' is not a chr:start-end locus; IGV will search for it as a feature "
-          f"name. If IGV does not know it, the snapshot silently shows the whole-genome view.")
+    # A feature name for IGV's search; run_igv checks afterwards that IGV found it (_verify_loci)
     return [_region_record(region, [region], tag)]
 
 
 def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_height=200,
-                      additional_pref=None, output_format='png'):
+                      additional_pref=None, output_format='png', verify_dir=None):
     """
     Turn region records into snapshot paths and batch lines.
 
@@ -469,6 +467,10 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         max_panel_height (int): maxPanelHeight per region.
         additional_pref (str): Extra batch commands before each snapshot.
         output_format (str): 'png', 'svg' or 'pdf' (pdf is written by IGV as svg).
+        verify_dir (str, optional): When given, each region also writes a bare `snapshot` into
+            `<verify_dir>/<index>/` (IGV names it after the locus it actually shows, see
+            _verify_loci) before its real snapshot, and ends with `gotoimmediate All`, so a failed
+            `goto` of the next region lands on the whole genome instead of keeping this view.
 
     Returns:
         (list of str, list of str): Snapshot paths and batch lines. Exact duplicates (same locus,
@@ -500,7 +502,14 @@ def _records_to_batch(records, output_dir, overlap_display='squish', max_panel_h
         region_content.append(f'maxPanelHeight {max_panel_height}')
         if additional_pref:
             region_content.append(additional_pref)
+        if verify_dir:
+            region_verify_dir = os.path.join(verify_dir, str(len(png_paths) - 1))
+            os.makedirs(region_verify_dir, exist_ok=True)  # IGV refuses a missing snapshotDirectory
+            region_content += [f'snapshotDirectory {_batch_arg(region_verify_dir)}', 'snapshot',
+                               f'snapshotDirectory {_batch_arg(os.path.abspath(output_dir))}']
         region_content.append(f'snapshot {png_fname}')
+        if verify_dir:
+            region_content.append('gotoimmediate All')
     if duplicates:
         print(f"[WARNING] Dropped {len(duplicates)} duplicate region(s) (same locus and snapshot name): "
               f"{', '.join(duplicates)}")
@@ -773,10 +782,18 @@ def create_batch_script(paths, regions, output_dir, genome='hg19', tag=None, max
     for bam in paths:
         batch_content.append(f'load {_batch_arg(bam if _is_url(bam) else os.path.abspath(bam))}')
     
-    png_paths, region_content = _get_paths_and_regions(regions,
-        output_dir=output_dir, overlap_display=_display_commands(paths, overlap_display),
-        max_panel_height=max_panel_height, additional_pref=additional_pref, tag=tag,
-        output_format=output_format)
+    # IGV reports nothing when a goto fails; every region is checked afterwards (see _verify_loci)
+    verify_base = os.environ.get('TMPDIR') or output_dir
+    os.makedirs(verify_base, exist_ok=True)
+    verify_dir = tempfile.mkdtemp(prefix='igver_verify_', dir=verify_base)
+    try:
+        png_paths, region_content = _get_paths_and_regions(regions,
+            output_dir=output_dir, overlap_display=_display_commands(paths, overlap_display),
+            max_panel_height=max_panel_height, additional_pref=additional_pref, tag=tag,
+            output_format=output_format, verify_dir=verify_dir)
+    except Exception:
+        shutil.rmtree(verify_dir, ignore_errors=True)
+        raise
     batch_content += region_content
     batch_content.append('exit')
     batch_text = '\n'.join(batch_content)
@@ -862,8 +879,106 @@ def _write_batch(path, header, blocks):
 
 
 def _snapshot_name(block):
-    """Return the snapshot filename a region block writes (its final `snapshot <name>` line)."""
-    return block[-1][len('snapshot '):].strip()
+    """Return the snapshot filename a region block writes (its last `snapshot <name>` line)."""
+    line = next(line for line in reversed(block) if line.startswith('snapshot '))
+    return line[len('snapshot '):].strip()
+
+
+WHOLE_GENOME_LOCUS = re.compile(r'^All(_[\d,]+_[\d,]+)?$')
+
+
+def ensure_svg_size(svg_path, width, height):
+    """
+    Give an SVG without width/height/viewBox on its root element a canvas size, in place.
+
+    IGV 2.19.8 writes SVGs without a size, which cairosvg cannot convert ("The SVG size is
+    undefined") and some viewers mis-scale. The size comes from the same view's PNG.
+
+    Parameters:
+        svg_path (str): SVG file to update.
+        width, height (int): Canvas size in pixels.
+
+    Returns:
+        bool: True if the size was added, False if the root already had one (file untouched).
+
+    Example:
+        >>> ensure_svg_size('chr1-1-2.svg', 1150, 513)
+        True
+    """
+    with open(svg_path) as f:
+        text = f.read()
+    m = re.search(r'<svg\b[^>]*>', text)
+    if not m or re.search(r'\s(width|height|viewBox)\s*=', m.group(0)):
+        return False
+    sized = f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}"'
+    with open(svg_path, 'w') as f:
+        f.write(text[:m.start()] + sized + text[m.start() + len('<svg'):])
+    return True
+
+
+def _block_verify_dir(block):
+    """The directory of a block's bare verification `snapshot`, or None for a block without one."""
+    if 'snapshot' not in block:
+        return None
+    i = block.index('snapshot')
+    if i == 0 or not block[i - 1].startswith('snapshotDirectory '):
+        return None
+    return shlex.split(block[i - 1])[1]
+
+
+def _verify_loci(blocks, output_dir):
+    """
+    Check which locus IGV actually showed for every rendered region block.
+
+    IGV's `goto` always reports success: after an unknown gene or contig, or a start beyond the
+    chromosome end, IGV keeps the previous view (the whole genome, thanks to the reset), and a
+    split view silently drops a bad locus. The bare verification snapshot is named after IGV's
+    current locus ('chr8_32,534,767_32,536,767', 'a | b', 'All_1_3,095,677'), which is checked
+    here. A wrong real snapshot is deleted. SVG snapshots get the verification PNG's canvas size.
+
+    Parameters:
+        blocks (list of list of str): Region blocks from the batch (see _split_batch).
+        output_dir (str): Directory of the real snapshots.
+
+    Returns:
+        (list of str, list of str): Messages for regions IGV did not show (their snapshots were
+            deleted), and snapshot names that could not be verified (no verification PNG).
+
+    Example:
+        >>> _verify_loci(blocks, '/out')  # IGV ended on 'All_1_3,095,677' for 'goto NOTAGENE'
+        (["'NOTAGENE' (NOTAGENE.png): IGV could not find it and showed the whole genome; ..."], [])
+    """
+    failures, unverified = [], []
+    for block in blocks:
+        verify = _block_verify_dir(block)
+        name = _snapshot_name(block)
+        snapshot = os.path.join(output_dir, name)
+        if verify is None or not os.path.exists(snapshot):
+            continue
+        pngs = sorted((p for p in os.listdir(verify) if p.endswith('.png')) if os.path.isdir(verify) else [],
+                      key=lambda p: os.path.getmtime(os.path.join(verify, p)))
+        if not pngs:
+            unverified.append(name)
+            continue
+        png = os.path.join(verify, pngs[-1])
+        shown = pngs[-1][:-len('.png')]
+        frames = shown.split(' | ')
+        goto = block[0][len('goto '):].strip()
+        tokens = goto.split()
+        n_wanted = len(tokens) if all(parse_locus(t) for t in tokens) else 1
+        problem = None
+        if WHOLE_GENOME_LOCUS.match(frames[0]) and goto.lower() != 'all':
+            problem = "IGV could not find it and showed the whole genome"
+        elif len(frames) < n_wanted:
+            problem = f"IGV showed only {len(frames)} of {n_wanted} loci ('{shown}')"
+        if problem:
+            os.remove(snapshot)
+            failures.append(f"'{goto}' ({name}): {problem}; snapshot removed")
+        elif name.endswith('.svg'):
+            with Image.open(png) as im:
+                ensure_svg_size(snapshot, *im.size)
+        os.remove(png)
+    return failures, unverified
 
 
 def _run_until_stalled(cmd, png_paths, stall_timeout, debug=False):
@@ -1044,6 +1159,28 @@ def _igv_log_excerpt(run_dir, n_lines=20):
     return f'{head}\n(last lines of {log}:)\n' + '\n'.join(lines[-5:])
 
 
+def _clear_dir(path):
+    """Delete the files in a directory (keep the directory); no-op for None or a missing directory."""
+    if path and os.path.isdir(path):
+        for name in os.listdir(path):
+            os.remove(os.path.join(path, name))
+
+
+def _remove_verify_dirs(blocks):
+    """Delete the verification directories of `blocks`, and their igver_verify_* parent once empty."""
+    parents = set()
+    for block in blocks:
+        verify = _block_verify_dir(block)
+        if verify:
+            shutil.rmtree(verify, ignore_errors=True)
+            parents.add(os.path.dirname(verify))
+    for parent in parents:
+        try:
+            os.rmdir(parent)  # fails while other -j chunks (or kept regions) still use it
+        except OSError:
+            pass
+
+
 def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False, 
             singularity_image='docker://sahuno/igver:latest', singularity_args='-B /data1 -B /home',
             debug=False, use_singularity=None, stall_timeout=600, igv_prefs=None,
@@ -1101,6 +1238,8 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
         _remove_previous_output(png_paths, debug)
 
     # Run IGV; on retry, rewrite the batch to cover only the regions still missing
+    with open(batch_script) as f:
+        _, all_blocks = _split_batch(f.read())
     max_iter = 2
     run_dir = None
     for n_iter in range(max_iter):
@@ -1111,7 +1250,10 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
             with open(batch_script) as f:
                 header, blocks = _split_batch(f.read())
             want = {os.path.basename(png) for png in missing}
-            _write_batch(batch_script, header, [b for b in blocks if _snapshot_name(b) in want])
+            retry = [b for b in blocks if _snapshot_name(b) in want]
+            _write_batch(batch_script, header, retry)
+            for block in retry:  # a stale verification PNG must not be read for the retried view
+                _clear_dir(_block_verify_dir(block))
             print(f"[WARNING:{time.ctime()}] {len(missing)} snapshot(s) missing; IGV log errors from "
                   f"{run_dir}:\n{_igv_log_excerpt(run_dir)}", file=sys.stderr)
             shutil.rmtree(run_dir, ignore_errors=True)  # the retry gets its own directory
@@ -1123,12 +1265,28 @@ def run_igv(batch_script, png_paths, igv_dir="/opt/IGV_2.19.8", overwrite=False,
             print(f"[LOG:{time.ctime()}] Running IGV command:\n{cmd}")
         _run_until_stalled(cmd, png_paths, stall_timeout, debug)
 
-    if not all(os.path.exists(png) for png in png_paths):
+    # Only now (after the retries) check what IGV showed: a wrong snapshot deleted inside the loop
+    # would be re-queued and fail the same way
+    missing = {os.path.basename(png) for png in png_paths if not os.path.exists(png)}  # never written
+    failures, unverified = _verify_loci(all_blocks, os.path.dirname(png_paths[0])) if png_paths else ([], [])
+    if unverified:
+        print(f"[WARNING] could not verify the locus shown for {len(unverified)} snapshot(s) "
+              f"(no verification snapshot): {', '.join(unverified)}", file=sys.stderr)
+    not_found = ("\nIGV did not show these regions:\n  " + "\n  ".join(failures)) if failures else ''
+    # the kept batch for missing regions still needs their verification directories
+    _remove_verify_dirs([b for b in all_blocks if _snapshot_name(b) not in missing])
+
+    if missing:
         raise RuntimeError(f"[ERROR:{time.ctime()}] Failed to generate all PNG files after {max_iter} iterations. "
                            f"Batch for the missing regions kept at {batch_script}; IGV directory kept at "
-                           f"{run_dir} . Last IGV log errors:\n{_igv_log_excerpt(run_dir)}")
+                           f"{run_dir} . Last IGV log errors:\n{_igv_log_excerpt(run_dir)}{not_found}")
     if run_dir:
         shutil.rmtree(run_dir, ignore_errors=True)
+    if failures:
+        os.remove(batch_script)
+        raise RuntimeError(f"[ERROR:{time.ctime()}] {len(failures)} region(s) could not be shown; IGV reports no "
+                           f"error for these, so the snapshots were checked against the locus IGV displayed."
+                           f"{not_found}")
 
     # Cleanup batch script
     os.remove(batch_script)

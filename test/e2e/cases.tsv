@@ -4,7 +4,7 @@
 #   {SETUP} per-case scratch dir, {HG38_BAM}, {MM10_BAM} (see e2e_runner.py).
 # expect_files: ';'-separated exact `ls -A` of {OUT} (a kept <uuid>.batch is reported but not compared); '-' = empty.
 # checks (';'-separated): grep:RE / nogrep:RE on stdout+stderr; count:RE=N; width:N (every PNG);
-#   tmp_clean (no igver_* dir left in the case TMPDIR); pdf_width:N (every PDF > 20 KB, rasterises to N px); home_untouched (real ~/igv log mtime + prefs sha1);
+#   tmp_clean (no igver_* dir left in the case TMPDIR); pdf_width:N (every PDF > 20 KB, rasterises at 300 dpi = igver's default --dpi to N px); home_untouched (real ~/igv log mtime + prefs sha1);
 #   rundirs:N (distinct igver_igv_ dirs named in the output); same_as:CASE / differs_from:CASE (pixel compare
 #   of the same-named PNG); overlay:poisoned (bind a copy of fixtures/poisoned_igv over ~/igv);
 #   setup:stale_index (copy {BAM}+index to {SETUP}, index older than BAM); visual (PNG must be opened by hand).
@@ -26,7 +26,7 @@ E4a	both	-i {BAM} -r {FIX}/e4a_space.hg19.bed --stall-timeout 60	0	8-32534766-32
 E4b	both	-i {BAM} -r {FIX}/e4b_slash.hg19.bed --stall-timeout 60	0	8-32534766-32536767.LINE_L1.png	120		B4: BED name with a slash
 E4c	both	-i "{FIX}/with space/test_tumor.bam" -r 8:32534767-32536767 --stall-timeout 60	0	8-32534767-32536767.png	120		B4: track path with a space (probe: IGV accepts double-quoted batch arguments)
 E5a	both	-i {BAM} -r typo.hg19.bed --stall-timeout 60	1	-	5	grep:region file not found;tmp_clean	B5: typo'd region file
-E5b	both	-i {BAM} -r NOTAGENE123 --stall-timeout 60	1	-	120	grep:could not find.*NOTAGENE123	B5/U1: unknown gene -> exit 1, no snapshot (1.3.0 wrote a whole-genome image with a warning; 1.3.1 verifies the locus)
+E5b	both	-i {BAM} -r NOTAGENE123 --stall-timeout 60	1	-	120	grep:NOTAGENE123.*could not find	B5/U1: unknown gene -> exit 1, no snapshot (1.3.0 wrote a whole-genome image with a warning; 1.3.1 verifies the locus)
 E6	both	-i {BAM} -r {FIX}/e6_dups.hg19.bed -j 2 --stall-timeout 60	0	8-32534766-32536767.dup.png;19-11137897-11139898.other.png	150	grep:[Dd]uplicate	B6: duplicate BED lines rendered once
 E7	both	-i {FIX}/e7_tracks.txt {FIX}/e7_genes.hg19.bed -r 8:32534767-32536767 --debug --stall-timeout 60	0	8-32534767-32536767.png	120	grep:Loading resource:\s*\S*/test_tumor.bam;grep:Loading resource:\s*\S*/e7_genes.hg19.bed;nogrep:Loading resource:\s*\S*e7_tracks.txt;visual	B7: .txt track list mixed with a track (both tracks shown)
 E8	both	-i ../../test_tumor.bam -r 8:32534767-32536767 -g grch37.fa --debug --stall-timeout 60	0	8-32534767-32536767.png	150	grep:Loading genome:\s*/\S*/grch37.fa;count:Loading genome:=1;visual	B8: relative FASTA (symlink into /data1/greenbab/database), no manual binds
@@ -37,8 +37,8 @@ R1	both	-i {HG38_BAM} {FIX}/r1_cftr.hg38.bed -r chr7:117540000-117560000 -g hg38
 R2	both	-i {MM10_BAM} -r chr13:9830023-9840665 -g mm10 --stall-timeout 60	0	chr13-9830023-9840665.png	150		regression: mm10 genome JSON loads
 R3	both	-i {BAM} -r 8:32534767-32536767 --methylation --debug --stall-timeout 60	0	8-32534767-32536767.png	120	grep:colorBy BASE_MODIFICATION	regression: --methylation injects colorBy (batch printed by --debug)
 R4	both	-i {BAM} -r 8:32534767-32536767 -f pdf --stall-timeout 60	0	8-32534767-32536767.pdf;8-32534767-32536767.svg	120	pdf_width:1150;tmp_clean	regression + U2: -f pdf writes a real PDF (rasterises to 1150 px) and keeps the SVG
-U1a	both	-i {BAM} -r 8:32534767-32536767 NOSUCHCONTIG:1-100 --stall-timeout 60	1	8-32534767-32536767.png	120	grep:could not find.*NOSUCHCONTIG:1-100;visual	U1: unknown contig after a good region (IGV kept the previous view) -> exit 1, good PNG kept, bad one absent
+U1a	both	-i {BAM} -r 8:32534767-32536767 NOSUCHCONTIG:1-100 --stall-timeout 60	1	8-32534767-32536767.png	120	grep:NOSUCHCONTIG:1-100.*could not find;visual	U1: unknown contig after a good region (IGV kept the previous view) -> exit 1, good PNG kept, bad one absent
 U1b	both	-i {BAM} -r "8:32534767-32536767 NOSUCHCONTIG:1-100" --stall-timeout 60	1	-	120	grep:NOSUCHCONTIG:1-100	U1: split view with a bad locus (IGV drops it silently) -> exit 1
-U1c	both	-i {BAM} -r 8:32534767-32536767 8:999999999-1000000100 --stall-timeout 60	1	8-32534767-32536767.png	120	grep:could not find.*8:999999999-1000000100	U1: start beyond the chromosome end -> exit 1
+U1c	both	-i {BAM} -r 8:32534767-32536767 8:999999999-1000000100 --stall-timeout 60	1	8-32534767-32536767.png	120	grep:8:999999999-1000000100.*could not find	U1: start beyond the chromosome end -> exit 1
 U1d	both	-i {BAM} -r TP53 --stall-timeout 60	0	TP53.png	120	tmp_clean;visual	U1: a gene IGV knows renders (hg19 TP53 on chr17)
 U1e	both	-i {BAM} -r All --stall-timeout 60	0	All.png	120	tmp_clean	U1: an explicit whole-genome request is allowed

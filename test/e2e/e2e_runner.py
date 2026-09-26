@@ -213,7 +213,7 @@ def run_case(case, mode, sif, bind_repo, outroot, done):
             for pdf in [os.path.join(out, f) for f in got if f.endswith('.pdf')]:
                 size = os.path.getsize(pdf)
                 prefix = os.path.join(out + '.setup', 'pdf_raster')
-                r = subprocess.run([PDFTOPPM, '-png', '-r', '96', '-singlefile', pdf, prefix],
+                r = subprocess.run([PDFTOPPM, '-png', '-r', '300', '-singlefile', pdf, prefix],  # page = canvas at --dpi 300
                                    capture_output=True, text=True)
                 w = Image.open(prefix + '.png').size[0] if r.returncode == 0 else None
                 print(f'    {cid}: {os.path.basename(pdf)} {size} bytes, rasterised width {w}')

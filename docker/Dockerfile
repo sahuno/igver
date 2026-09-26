@@ -21,7 +21,7 @@ RUN pacman -Syu --noconfirm  gnu-free-fonts opendesktop-fonts ttf-dejavu fontcon
 RUN fc-cache -f -v
 
 # install python packages
-RUN pacman -Syu --noconfirm python-pip python-yaml python-matplotlib python-pillow
+RUN pacman -Syu --noconfirm python-pip python-yaml python-matplotlib python-pillow python-cairosvg
 
 # Install igver from the checkout being built (build context = repo root, see .dockerignore),
 # not from a fresh clone of main: a later rebuild of a tag must contain that tag's code.

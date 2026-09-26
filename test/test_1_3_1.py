@@ -234,16 +234,19 @@ class TestU2SvgAndPdf:
         assert ensure_svg_size(str(svg), 300, 200) is False
         assert svg.read_text() == text
 
-    def test_cli_pdf_is_written_with_the_canvas_size(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize('dpi,media_box', [(None, b'0 0 72 48'), ('96', b'0 0 225 150')])
+    def test_cli_pdf_is_written_with_the_canvas_size(self, tmp_path, monkeypatch, dpi, media_box):
+        # the page is the canvas at --dpi (default 300): 300x200 px -> 1x0.67 in = 72x48 pt
         out = tmp_path / 'o'
-        code, _ = _run(['-i', str(TEST_BAM), '-r', '8:1-100', '-o', str(out), '-g', 'hg19', '--no-singularity',
-                        '-f', 'pdf'], _fake_igv_factory(width=300, height=200), tmp_path, monkeypatch)
+        argv = ['-i', str(TEST_BAM), '-r', '8:1-100', '-o', str(out), '-g', 'hg19', '--no-singularity', '-f', 'pdf']
+        code, _ = _run(argv + (['--dpi', dpi] if dpi else []), _fake_igv_factory(width=300, height=200),
+                       tmp_path, monkeypatch)
         assert code == 0
         assert _files(out) == ['8-1-100.pdf', '8-1-100.svg']
         pdf = (out / '8-1-100.pdf').read_bytes()
-        assert pdf.startswith(b'%PDF') and len(pdf) > 1000
-        # cairosvg: 96 px per inch -> 300x200 px = 225x150 pt
-        assert re.search(rb'/MediaBox \[ ?0 0 225 150 ?\]', pdf), pdf[:400]
+        assert pdf.startswith(b'%PDF')
+        assert re.search(rb'/MediaBox \[ ?' + media_box + rb' ?\]', pdf), pdf[:400]
+        assert b'/Font' in pdf  # the fixture's text was rendered, so the page is not empty
 
     def test_cli_svg_is_sized(self, tmp_path, monkeypatch):
         out = tmp_path / 'o'
